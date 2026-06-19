@@ -1,81 +1,76 @@
-# Synth ESP32 + PCM5102A
+# Synth (ESP32 + PCM5102A)
 
-Sintetizador simple con ESP32 y DAC PCM5102A.
+Firmware actual del proyecto `Synth` con sirena pasiva, modulación por LFOs y control completo por MUX + botones + OLED.
 
-Funciones principales:
-- Control de frecuencia con potenciometro.
-- Cambio de forma de onda con boton.
-- Salida de audio por DAC I2S (PCM5102A).
+## Estado Actual
 
-## Formas de onda
-- 0: seno
-- 1: cuadrada
-- 2: sierra
+- Sirena base continua en estéreo por I2S + PCM5102A.
+- LFOs disponibles: `Pitch`, `Volume`, `Filter`, `Reverb`, `Delay`.
+- Cada LFO tiene `ON/OFF` y forma de onda independiente (`SIN`, `SQR`, `TRI`, `SAW`).
+- La sirena también puede cambiar su forma (`ORIG`, `SIN`, `SQR`, `TRI`, `SAW`).
+- Pantalla OLED por secciones:
+  - Inicio: sección de sirena + guía de botones por color.
+  - Navegación: una sección LFO por pantalla con sus parámetros.
 
-## Conexionado
-### ESP32 -> PCM5102A (I2S)
-- GPIO26 -> BCK
-- GPIO25 -> LRCK/WS
-- GPIO22 -> DIN
+## Mapeo De Hardware
 
-### Alimentacion PCM5102A
-- VIN (digital) -> 3.3V
-- AVCC (analogico) -> 3.3V filtrado
-- GND digital -> GND comun
-- AGND -> GND comun (punto estrella)
-- XSMT -> 3.3V
-- FMT -> GND
-- SCK -> GND
+### I2S (ESP32 -> PCM5102A)
 
-### Potenciometro
-- Lateral 1 -> GND
-- Centro -> GPIO34
-- Lateral 2 -> 3.3V
+- `GPIO26` -> `BCK`
+- `GPIO25` -> `WS/LRCK`
+- `GPIO22` -> `DIN`
 
-### Boton
-- Un pin -> GPIO27
-- Otro pin -> GND
+### MUX CD4067
 
-## Diagrama rapido
+- `SIG` -> `GPIO35`
+- `S0` -> `GPIO16`
+- `S1` -> `GPIO17`
+- `S2` -> `GPIO19`
+- `S3` -> `GPIO18`
 
-```text
-ESP32                        PCM5102A
------                        --------
-GPIO26  -------------------> BCK
-GPIO25  -------------------> LRCK/WS
-GPIO22  -------------------> DIN
-3.3V    -------------------> VIN (digital)
-3.3V filtrado -------------> AVCC
-GND     -------------------> GND
-GND     -------------------> AGND
-3.3V    -------------------> XSMT
-GND     -------------------> FMT
-GND     -------------------> SCK
+### OLED I2C
 
-POT: 3.3V ---/\/\/--- GND
-              |
-            GPIO34
+- `SDA` -> `GPIO21`
+- `SCL` -> `GPIO23`
 
-BTN: GPIO27 ---o o--- GND
+### Botones
+
+- `GPIO27` (Rojo): cambia forma de onda de la sirena.
+- `GPIO13` (Blanco): selecciona sección/LFO activa.
+- `GPIO4` (Verde): enciende/apaga el LFO seleccionado.
+- `GPIO5` (Negro): cambia forma de onda del LFO seleccionado.
+
+## Potenciómetros (Canales Del MUX)
+
+- `I0` -> `Pitch LFO Depth`
+- `I1` -> `Pitch LFO Rate`
+- `I2` -> `Volume LFO Rate`
+- `I3` -> `Volume LFO Depth`
+- `I4` -> `Filter Base` (`-1` LP, `0` neutro, `+1` HP)
+- `I5` -> `Filter LFO Rate`
+- `I6` -> `Filter LFO Depth`
+- `I7` -> `Reverb Mix`
+- `I8` -> `Reverb Decay`
+- `I9` -> `Delay Time`
+- `I10` -> `Delay Feedback`
+- `I11` -> `Delay Mix`
+
+## Build Y Carga
+
+Compilar:
+
+```powershell
+pio run
 ```
 
-## Compilar y subir
-Desde la carpeta del proyecto:
+Subir firmware (ajusta `COMx`):
 
-- Compilar:
-  - pio run
-- Subir firmware:
-  - pio run -t upload --upload-port COM3
-- Monitor serie:
-  - pio device monitor --port COM3 --baud 115200
+```powershell
+pio run -t upload --upload-port COM4
+```
 
-## Nota de calidad de audio
-La limpieza de audio depende en gran parte del hardware:
-- Alimentacion limpia para AVCC.
-- Masa en punto estrella.
-- Cableado corto y ordenado para I2S.
-- Salida del DAC conectada a entrada AUX/LINE IN del equipo de audio.
+Monitor serie opcional:
 
-## Estructura del proyecto
-- src/main.cpp: firmware principal
-- platformio.ini: configuracion de PlatformIO
+```powershell
+pio device monitor -b 115200
+```
