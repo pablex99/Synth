@@ -1,72 +1,75 @@
-# Synth Tone Test (PCM5102A + ESP32)
+# Synth (ESP32 + PCM5102A)
 
-Proyecto de prueba de sirena usando el mismo conexionado y hardware del proyecto Synth.
+Firmware actual del proyecto `Synth` con sirena pasiva, modulación por LFOs y control completo por MUX + botones + OLED.
 
-## Pines I2S (igual que proyecto Synth)
+## Estado Actual
 
-- BCK: GPIO26
-- WS/LRCK: GPIO25
-- DIN: GPIO22
+- Sirena base continua en estéreo por I2S + PCM5102A.
+- LFOs disponibles: `Pitch`, `Volume`, `Filter`, `Reverb`, `Delay`.
+- Cada LFO tiene `ON/OFF` y forma de onda independiente (`SIN`, `SQR`, `TRI`, `SAW`).
+- La sirena también puede cambiar su forma (`ORIG`, `SIN`, `SQR`, `TRI`, `SAW`).
+- Pantalla OLED por secciones:
+  - Inicio: sección de sirena + guía de botones por color.
+  - Navegación: una sección LFO por pantalla con sus parámetros.
 
-## Pines MUX (CD4067)
+## Mapeo De Hardware
 
-- SIG: GPIO35
-- S0: GPIO16
-- S1: GPIO17
-- S2: GPIO19
-- S3: GPIO18
+### I2S (ESP32 -> PCM5102A)
 
-## Potenciometros (canales MUX)
+- `GPIO26` -> `BCK`
+- `GPIO25` -> `WS/LRCK`
+- `GPIO22` -> `DIN`
 
-- I0: Pitch LFO Depth
-- I1: Pitch LFO Rate
-- I2: Volume LFO Rate
-- I3: Volume LFO Depth
-- I4: Filter Base (-1 LP / 0 neutral / +1 HP)
-- I5: Filter LFO Rate
-- I6: Filter LFO Depth
-- I7: Reverb Mix
-- I8: Reverb Decay
-- I9: Delay Time
-- I10: Delay Feedback
-- I11: Delay Mix
+### MUX CD4067
 
-## Botones
+- `SIG` -> `GPIO35`
+- `S0` -> `GPIO16`
+- `S1` -> `GPIO17`
+- `S2` -> `GPIO19`
+- `S3` -> `GPIO18`
 
-- GPIO27: cambia forma de onda de la sirena (ORIG/SIN/SQR/TRI/SAW)
-- GPIO13: selecciona seccion LFO activa (Pitch/Volume/Filter/Reverb/Delay)
-- GPIO4: enciende/apaga (ON/OFF) el LFO seleccionado
-- GPIO5: cambia forma del LFO activo (SIN/SQR/TRI/SAW)
+### OLED I2C
 
-## OLED I2C
+- `SDA` -> `GPIO21`
+- `SCL` -> `GPIO23`
 
-- SDA: GPIO21
-- SCL: GPIO23
+### Botones
 
-## Comportamiento
+- `GPIO27` (Rojo): cambia forma de onda de la sirena.
+- `GPIO13` (Blanco): selecciona sección/LFO activa.
+- `GPIO4` (Verde): enciende/apaga el LFO seleccionado.
+- `GPIO5` (Negro): cambia forma de onda del LFO seleccionado.
 
-- Sirena pasiva continua en estereo.
-- LFO de pitch, volumen, filtro, reverb y delay controlados desde I0-I11.
-- Cada LFO tiene forma independiente (SIN/SQR/TRI/SAW) y estado ON/OFF.
-- Forma de onda de la sirena con selector dedicado (ORIG/SIN/SQR/TRI/SAW).
-- Filtro base en I4: centro sin sesgo, izquierda prioriza LP, derecha prioriza HP.
-- OLED muestra:
-  - al iniciar: solo seccion SIRENA y su forma de onda
-  - al seleccionar con GPIO13: solo la seccion del LFO elegido y sus parametros
+## Potenciómetros (Canales Del MUX)
 
-## Compilar
+- `I0` -> `Pitch LFO Depth`
+- `I1` -> `Pitch LFO Rate`
+- `I2` -> `Volume LFO Rate`
+- `I3` -> `Volume LFO Depth`
+- `I4` -> `Filter Base` (`-1` LP, `0` neutro, `+1` HP)
+- `I5` -> `Filter LFO Rate`
+- `I6` -> `Filter LFO Depth`
+- `I7` -> `Reverb Mix`
+- `I8` -> `Reverb Decay`
+- `I9` -> `Delay Time`
+- `I10` -> `Delay Feedback`
+- `I11` -> `Delay Mix`
+
+## Build Y Carga
+
+Compilar:
 
 ```powershell
 pio run
 ```
 
-## Subir (ejemplo COM3)
+Subir firmware (ajusta `COMx`):
 
 ```powershell
-pio run -t upload --upload-port COM3
+pio run -t upload --upload-port COM4
 ```
 
-## Monitor serie (opcional)
+Monitor serie opcional:
 
 ```powershell
 pio device monitor -b 115200
