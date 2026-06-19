@@ -1,81 +1,73 @@
-# Synth ESP32 + PCM5102A
+# Synth Tone Test (PCM5102A + ESP32)
 
-Sintetizador simple con ESP32 y DAC PCM5102A.
+Proyecto de prueba de sirena usando el mismo conexionado y hardware del proyecto Synth.
 
-Funciones principales:
-- Control de frecuencia con potenciometro.
-- Cambio de forma de onda con boton.
-- Salida de audio por DAC I2S (PCM5102A).
+## Pines I2S (igual que proyecto Synth)
 
-## Formas de onda
-- 0: seno
-- 1: cuadrada
-- 2: sierra
+- BCK: GPIO26
+- WS/LRCK: GPIO25
+- DIN: GPIO22
 
-## Conexionado
-### ESP32 -> PCM5102A (I2S)
-- GPIO26 -> BCK
-- GPIO25 -> LRCK/WS
-- GPIO22 -> DIN
+## Pines MUX (CD4067)
 
-### Alimentacion PCM5102A
-- VIN (digital) -> 3.3V
-- AVCC (analogico) -> 3.3V filtrado
-- GND digital -> GND comun
-- AGND -> GND comun (punto estrella)
-- XSMT -> 3.3V
-- FMT -> GND
-- SCK -> GND
+- SIG: GPIO35
+- S0: GPIO16
+- S1: GPIO17
+- S2: GPIO19
+- S3: GPIO18
 
-### Potenciometro
-- Lateral 1 -> GND
-- Centro -> GPIO34
-- Lateral 2 -> 3.3V
+## Potenciometros (canales MUX)
 
-### Boton
-- Un pin -> GPIO27
-- Otro pin -> GND
+- I0: Pitch LFO Depth
+- I1: Pitch LFO Rate
+- I2: Volume LFO Rate
+- I3: Volume LFO Depth
+- I4: Filter Base (-1 LP / 0 neutral / +1 HP)
+- I5: Filter LFO Rate
+- I6: Filter LFO Depth
+- I7: Reverb Mix
+- I8: Reverb Decay
+- I9: Delay Time
+- I10: Delay Feedback
+- I11: Delay Mix
 
-## Diagrama rapido
+## Botones
 
-```text
-ESP32                        PCM5102A
------                        --------
-GPIO26  -------------------> BCK
-GPIO25  -------------------> LRCK/WS
-GPIO22  -------------------> DIN
-3.3V    -------------------> VIN (digital)
-3.3V filtrado -------------> AVCC
-GND     -------------------> GND
-GND     -------------------> AGND
-3.3V    -------------------> XSMT
-GND     -------------------> FMT
-GND     -------------------> SCK
+- GPIO27: cambia forma de onda de la sirena (ORIG/SIN/SQR/TRI/SAW)
+- GPIO13: selecciona seccion LFO activa (Pitch/Volume/Filter/Reverb/Delay)
+- GPIO4: enciende/apaga (ON/OFF) el LFO seleccionado
+- GPIO5: cambia forma del LFO activo (SIN/SQR/TRI/SAW)
 
-POT: 3.3V ---/\/\/--- GND
-              |
-            GPIO34
+## OLED I2C
 
-BTN: GPIO27 ---o o--- GND
+- SDA: GPIO21
+- SCL: GPIO23
+
+## Comportamiento
+
+- Sirena pasiva continua en estereo.
+- LFO de pitch, volumen, filtro, reverb y delay controlados desde I0-I11.
+- Cada LFO tiene forma independiente (SIN/SQR/TRI/SAW) y estado ON/OFF.
+- Forma de onda de la sirena con selector dedicado (ORIG/SIN/SQR/TRI/SAW).
+- Filtro base en I4: centro sin sesgo, izquierda prioriza LP, derecha prioriza HP.
+- OLED muestra:
+  - al iniciar: solo seccion SIRENA y su forma de onda
+  - al seleccionar con GPIO13: solo la seccion del LFO elegido y sus parametros
+
+## Compilar
+
+```powershell
+pio run
 ```
 
-## Compilar y subir
-Desde la carpeta del proyecto:
+## Subir (ejemplo COM3)
 
-- Compilar:
-  - pio run
-- Subir firmware:
-  - pio run -t upload --upload-port COM3
-- Monitor serie:
-  - pio device monitor --port COM3 --baud 115200
+```powershell
+pio run -t upload --upload-port COM3
+```
 
-## Nota de calidad de audio
-La limpieza de audio depende en gran parte del hardware:
-- Alimentacion limpia para AVCC.
-- Masa en punto estrella.
-- Cableado corto y ordenado para I2S.
-- Salida del DAC conectada a entrada AUX/LINE IN del equipo de audio.
+## Monitor serie (opcional)
 
-## Estructura del proyecto
-- src/main.cpp: firmware principal
-- platformio.ini: configuracion de PlatformIO
+```powershell
+pio device monitor -b 115200
+```
