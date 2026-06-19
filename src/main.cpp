@@ -116,8 +116,8 @@ struct PotDef {
 };
 
 const PotDef potDefs[MUX_CHANNELS] = {
-  {0.05f, 12.0f},
   {0.0f, 520.0f},
+  {0.05f, 12.0f},
   {0.05f, 12.0f},
   {0.0f, 1.0f},
   {-1.0f, 1.0f},
@@ -138,11 +138,11 @@ DebouncedButton btnChangeWave;
 DebouncedButton btnSirenWave;
 DebouncedButton btnToggleLfo;
 
-LfoState pitchLfo = {0.0f, WAVE_SINE, 2.0f, 160.0f, true};
-LfoState volumeLfo = {0.0f, WAVE_SINE, 3.0f, 0.35f, true};
-LfoState filterLfo = {0.0f, WAVE_SINE, 0.80f, 0.45f, true};
-LfoState reverbLfo = {0.0f, WAVE_SINE, 0.60f, 0.40f, true};
-LfoState delayLfo = {0.0f, WAVE_SINE, 0.70f, 0.40f, true};
+LfoState pitchLfo = {0.0f, WAVE_SINE, 0.0f, 0.0f, false};
+LfoState volumeLfo = {0.0f, WAVE_SINE, 0.0f, 0.0f, false};
+LfoState filterLfo = {0.0f, WAVE_SINE, 0.0f, 0.0f, false};
+LfoState reverbLfo = {0.0f, WAVE_SINE, 0.0f, 0.0f, false};
+LfoState delayLfo = {0.0f, WAVE_SINE, 0.0f, 0.0f, false};
 
 SirenWave sirenWave = SIREN_ORIGINAL;
 LfoSlot selectedLfo = LFO_SLOT_PITCH;
@@ -312,6 +312,16 @@ int readMuxRaw(uint8_t channel) {
   selectMuxChannel(channel);
   delayMicroseconds(4);
   return analogRead(MUX_SIG_PIN);
+}
+
+void initPotStateFromHardware() {
+  for (int ch = 0; ch < MUX_CHANNELS; ch++) {
+    int raw = readMuxRaw(ch);
+    muxRawSmooth[ch] = static_cast<float>(raw);
+
+    float normalized = clampf(muxRawSmooth[ch] / 4095.0f, 0.0f, 1.0f);
+    potMapped[ch] = mapLinear(normalized, potDefs[ch].minValue, potDefs[ch].maxValue);
+  }
 }
 
 float evalWaveByPhase(float phase, WaveShape shape) {
@@ -591,6 +601,8 @@ void setup() {
   pinMode(MUX_S2_PIN, OUTPUT);
   pinMode(MUX_S3_PIN, OUTPUT);
 
+  initPotStateFromHardware();
+
   initButton(btnSelectLfo, BTN_SELECT_LFO_PIN);
   initButton(btnChangeWave, BTN_CHANGE_WAVE_PIN);
   initButton(btnSirenWave, BTN_SIREN_WAVE_PIN);
@@ -621,15 +633,15 @@ void loop() {
     float sweep = sinf(sirenPhase);
     float freq = SIREN_CENTER_HZ + SIREN_SWEEP_HZ * sweep;
 
-    float pitchRaw = nextLfoRaw(pitchLfo);
     if (pitchLfo.enabled) {
+      float pitchRaw = nextLfoRaw(pitchLfo);
       freq += pitchRaw * pitchLfo.depth;
     }
     freq = clampf(freq, 60.0f, 2800.0f);
 
     float amp = OUTPUT_GAIN;
-    float volumeRaw = nextLfoRaw(volumeLfo);
     if (volumeLfo.enabled) {
+      float volumeRaw = nextLfoRaw(volumeLfo);
       float trem = (1.0f - volumeLfo.depth) + volumeLfo.depth * ((volumeRaw + 1.0f) * 0.5f);
       amp *= clampf(trem, 0.0f, 1.2f);
     }
@@ -637,36 +649,40 @@ void loop() {
     float carrier = evalSirenCarrier(carrierPhase, sirenWave);
     float sample = carrier * amp;
 
-    float filterRaw = nextLfoRaw(filterLfo);
     float filterBase = potMapped[POT_FILTER_BASE];
-    float filterMorph = filterBase;
     if (filterLfo.enabled) {
+      float filterRaw = nextLfoRaw(filterLfo);
+      float filterMorph = filterBase;
       filterMorph += filterRaw * filterLfo.depth;
+      filterMorph = clampf(filterMorph, -1.0f, 1.0f);
+
+      float cutoff = 280.0f + fabsf(filterMorph) * 6500.0f;
+      sample = processFilter(sample, cutoff, filterMorph);
+    } else if (fabsf(filterBase) > 0.03f) {
+      float filterMorph = clampf(filterBase, -1.0f, 1.0f);
+      float cutoff = 280.0f + fabsf(filterMorph) * 6500.0f;
+      sample = processFilter(sample, cutoff, filterMorph);
     }
-    filterMorph = clampf(filterMorph, -1.0f, 1.0f);
 
-    float cutoff = 280.0f + fabsf(filterMorph) * 6500.0f;
-    sample = processFilter(sample, cutoff, filterMorph);
-
-    float reverbMix = potMapped[POT_REVERB_MIX];
-    float reverbDecay = potMapped[POT_REVERB_DECAY];
     if (reverbLfo.enabled) {
+      float reverbMix = potMapped[POT_REVERB_MIX];
+      float reverbDecay = potMapped[POT_REVERB_DECAY];
       float revRaw = nextLfoRaw(reverbLfo);
       reverbMix = clampf(reverbMix + revRaw * 0.35f * reverbLfo.depth, 0.0f, 0.85f);
       reverbDecay = clampf(reverbDecay + revRaw * 0.20f * reverbLfo.depth, 0.05f, 0.98f);
+      sample = processReverb(sample, reverbMix, reverbDecay);
     }
-    sample = processReverb(sample, reverbMix, reverbDecay);
 
-    float delayTime = potMapped[POT_DELAY_TIME];
-    float delayFeedback = potMapped[POT_DELAY_FEEDBACK];
-    float delayMix = potMapped[POT_DELAY_MIX];
     if (delayLfo.enabled) {
+      float delayTime = potMapped[POT_DELAY_TIME];
+      float delayFeedback = potMapped[POT_DELAY_FEEDBACK];
+      float delayMix = potMapped[POT_DELAY_MIX];
       float dlyRaw = nextLfoRaw(delayLfo);
       delayTime = clampf(delayTime + dlyRaw * 100.0f * delayLfo.depth, 10.0f, 450.0f);
       delayFeedback = clampf(delayFeedback + dlyRaw * 0.25f * delayLfo.depth, 0.0f, 0.95f);
       delayMix = clampf(delayMix + dlyRaw * 0.30f * delayLfo.depth, 0.0f, 0.90f);
+      sample = processDelay(sample, delayTime, delayFeedback, delayMix);
     }
-    sample = processDelay(sample, delayTime, delayFeedback, delayMix);
 
     sample = clampf(sample, -1.0f, 1.0f);
     int16_t s = static_cast<int16_t>(clampf(sample, -1.0f, 1.0f) * 32767.0f);
