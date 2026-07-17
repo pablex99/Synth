@@ -5,23 +5,31 @@
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 
-// ---------------- HW (igual proyecto Synth) ----------------
+// Arquitectura del firmware:
+// 1) Lee controles por CD4067 -> ADC.
+// 2) Genera y procesa la sirena en software.
+// 3) Envia PCM estereo por I2S al PCM5102A.
+// 4) Muestra estado resumido en OLED.
+
+// ---------------- Hardware ----------------
+// Pines I2S desde ESP32 hacia el modulo DAC PCM5102A.
 constexpr i2s_port_t I2S_PORT = I2S_NUM_0;
 constexpr int I2S_BCK_PIN = 26;
 constexpr int I2S_WS_PIN = 25;
 constexpr int I2S_DO_PIN = 22;
 
+// Lineas de control/direccion del CD4067 y pin de entrada ADC.
 constexpr int MUX_SIG_PIN = 35;
 constexpr int MUX_S0_PIN = 16;
 constexpr int MUX_S1_PIN = 17;
 constexpr int MUX_S2_PIN = 19;
 constexpr int MUX_S3_PIN = 18;
 
-constexpr int BTN_CHANGE_WAVE_PIN = 5;
-constexpr int BTN_TOGGLE_LFO_PIN = 4;
-constexpr int BTN_SELECT_LFO_PIN = 13;
+// Botones de usuario (activos en bajo con INPUT_PULLUP).
 constexpr int BTN_SIREN_WAVE_PIN = 27;
+constexpr int BTN_PAGE_PIN = 13;
 
+// Conexion de la pantalla OLED.
 constexpr int OLED_SDA_PIN = 21;
 constexpr int OLED_SCL_PIN = 23;
 constexpr int OLED_ADDR = 0x3C;
@@ -29,29 +37,62 @@ constexpr int OLED_WIDTH = 128;
 constexpr int OLED_HEIGHT = 64;
 
 // ---------------- Audio ----------------
+// Parametros del flujo PCM.
 constexpr int SAMPLE_RATE = 44100;
 constexpr int BUFFER_SIZE = 256;
-constexpr int MUX_CHANNELS = 12;
 
-constexpr float OUTPUT_GAIN = 0.10f;
+// Parametros de movimiento de la sirena.
 constexpr float SIREN_CENTER_HZ = 420.0f;
 constexpr float SIREN_SWEEP_HZ = 210.0f;
 constexpr float SIREN_RATE_HZ = 0.85f;
+constexpr float OUTPUT_GAIN_MAX = 0.14f;
 
-constexpr int DELAY_BUFFER_SIZE = 16384;
+// Tamano de buffers internos para reverb/delay simples.
 constexpr int REVERB_BUF_1 = 1400;
 constexpr int REVERB_BUF_2 = 1900;
+constexpr int DELAY_BUFFER_SIZE = 16384;
 
 constexpr uint32_t DEBOUNCE_MS = 40;
+constexpr uint32_t CONTROL_UPDATE_MS = 10;
 
-enum WaveShape {
-  WAVE_SINE = 0,
-  WAVE_SQUARE = 1,
-  WAVE_TRIANGLE = 2,
-  WAVE_SAW = 3,
-  WAVE_COUNT = 4
+// Modo de diagnostico temporal para aislar fuentes de ruido.
+// En false vuelve a controles normales leidos desde MUX.
+constexpr bool DIAG_FIXED_CONTROLS = false;
+constexpr float DIAG_FIXED_LFO_RATE_HZ = 1.0f;
+constexpr float DIAG_FIXED_LFO_DEPTH_HZ = 0.0f;
+constexpr float DIAG_FIXED_MASTER_GAIN = 0.60f;
+constexpr float DIAG_FIXED_FILTER_MORPH = 0.0f;
+constexpr float DIAG_FIXED_REVERB_MIX = 0.0f;
+constexpr float DIAG_FIXED_DELAY_MIX = 0.0f;
+constexpr bool DIAG_DISABLE_OLED = false;
+constexpr bool DIAG_DISABLE_OLED_REFRESH = false;
+constexpr bool DIAG_USE_TONETEST_CORE = false;
+
+// Reduce rafagas I2C de OLED para minimizar acople digital audible.
+constexpr uint32_t OLED_REFRESH_MIN_MS = 350;
+constexpr uint32_t OLED_REFRESH_FORCE_MS = 2000;
+
+// Endurecimiento de lectura MUX para reducir arrastre entre canales.
+constexpr float POT_SMOOTH_ALPHA = 0.10f;
+constexpr uint16_t MUX_SETTLE_US = 300;
+constexpr uint16_t MUX_INTER_SAMPLE_US = 40;
+constexpr uint8_t MUX_DUMMY_READS = 2;
+constexpr uint8_t MUX_AVG_SAMPLES = 4;
+constexpr float PARAM_SMOOTH_ALPHA = 0.0015f;
+
+// Mapa logico de los seis canales activos del MUX.
+enum PotChannel {
+  POT_LFO_RATE = 0,     // I0
+  POT_LFO_DEPTH = 1,    // I1
+  POT_MASTER_GAIN = 2,  // I2
+  POT_FILTER_MORPH = 3, // I3
+  POT_REVERB_MIX = 4,   // I4
+  POT_DELAY_MIX = 5     // I5
 };
 
+constexpr int POT_CHANNELS = 6;
+
+// Formas de oscilador disponibles para la portadora de sirena.
 enum SirenWave {
   SIREN_ORIGINAL = 0,
   SIREN_SINE = 1,
@@ -61,40 +102,6 @@ enum SirenWave {
   SIREN_WAVE_COUNT = 5
 };
 
-enum PotChannel {
-  POT_PITCH_DEPTH = 0,
-  POT_PITCH_RATE = 1,
-  POT_VOLUME_RATE = 2,
-  POT_VOLUME_DEPTH = 3,
-  POT_FILTER_BASE = 4,
-  POT_FILTER_RATE = 5,
-  POT_FILTER_DEPTH = 6,
-  POT_REVERB_MIX = 7,
-  POT_REVERB_DECAY = 8,
-  POT_DELAY_TIME = 9,
-  POT_DELAY_FEEDBACK = 10,
-  POT_DELAY_MIX = 11
-};
-
-enum LfoSlot {
-  LFO_SLOT_PITCH = 0,
-  LFO_SLOT_VOLUME = 1,
-  LFO_SLOT_FILTER = 2,
-  LFO_SLOT_REVERB = 3,
-  LFO_SLOT_DELAY = 4,
-  LFO_SLOT_COUNT = 5
-};
-
-enum DisplayPage {
-  PAGE_SIREN = 0,
-  PAGE_LFO_PITCH = 1,
-  PAGE_LFO_VOLUME = 2,
-  PAGE_LFO_FILTER = 3,
-  PAGE_LFO_REVERB = 4,
-  PAGE_LFO_DELAY = 5,
-  PAGE_COUNT = 6
-};
-
 struct DebouncedButton {
   uint8_t pin;
   bool lastReading;
@@ -102,65 +109,56 @@ struct DebouncedButton {
   uint32_t lastChangeMs;
 };
 
-struct LfoState {
-  float phase;
-  WaveShape shape;
-  float rateHz;
-  float depth;
-  bool enabled;
-};
-
+// Mapeo entre valor ADC normalizado [0..1] y rango de cada control.
 struct PotDef {
   float minValue;
   float maxValue;
 };
 
-const PotDef potDefs[MUX_CHANNELS] = {
-  {0.0f, 520.0f},
-  {0.05f, 12.0f},
-  {0.05f, 12.0f},
-  {0.0f, 1.0f},
-  {-1.0f, 1.0f},
-  {0.05f, 12.0f},
-  {0.0f, 1.0f},
-  {0.0f, 0.8f},
-  {0.10f, 0.95f},
-  {20.0f, 420.0f},
-  {0.0f, 0.90f},
-  {0.0f, 0.80f}
+const PotDef potDefs[POT_CHANNELS] = {
+  {0.05f, 12.0f},  // I0: LFO Rate (Hz)
+  {0.0f, 520.0f},  // I1: LFO Depth (Hz)
+  {0.0f, 1.0f},    // I2: Master Gain (0..100%)
+  {-1.0f, 1.0f},   // I3: Filter morph (LP..HP)
+  {0.0f, 1.0f},    // I4: Reverb mix
+  {0.0f, 1.0f}     // I5: Delay mix
 };
+
+const float potDeadband[POT_CHANNELS] = {
+  0.05f, // I0 rate Hz
+  1.5f,  // I1 depth Hz
+  0.006f,
+  0.01f,
+  0.01f,
+  0.01f};
 
 Adafruit_SSD1306 display(OLED_WIDTH, OLED_HEIGHT, &Wire, -1);
 bool oledReady = false;
 
-DebouncedButton btnSelectLfo;
-DebouncedButton btnChangeWave;
 DebouncedButton btnSirenWave;
-DebouncedButton btnToggleLfo;
-
-LfoState pitchLfo = {0.0f, WAVE_SINE, 0.0f, 0.0f, false};
-LfoState volumeLfo = {0.0f, WAVE_SINE, 0.0f, 0.0f, false};
-LfoState filterLfo = {0.0f, WAVE_SINE, 0.0f, 0.0f, false};
-LfoState reverbLfo = {0.0f, WAVE_SINE, 0.0f, 0.0f, false};
-LfoState delayLfo = {0.0f, WAVE_SINE, 0.0f, 0.0f, false};
+DebouncedButton btnPage;
 
 SirenWave sirenWave = SIREN_ORIGINAL;
-LfoSlot selectedLfo = LFO_SLOT_PITCH;
-DisplayPage currentPage = PAGE_SIREN;
+uint8_t displayPage = 0;
 
-float muxRawSmooth[MUX_CHANNELS] = {
-  2048.0f, 2048.0f, 2048.0f, 2048.0f,
-  2048.0f, 2048.0f, 2048.0f, 2048.0f,
-  2048.0f, 2048.0f, 2048.0f, 2048.0f};
-float potMapped[MUX_CHANNELS] = {0.0f};
+// Estado ADC por canal: valor crudo suavizado y valor de control mapeado.
+float muxRawSmooth[POT_CHANNELS] = {
+  2048.0f, 2048.0f, 2048.0f,
+  2048.0f, 2048.0f, 2048.0f};
+float potMapped[POT_CHANNELS] = {0.0f};
 
+// Fases de osciladores: portadora, barrido de sirena y LFO de pitch.
 float carrierPhase = 0.0f;
 float sirenPhase = 0.0f;
+float lfoPhase = 0.0f;
+float toneTestSweepPhase = 0.0f;
 
+// Estado historico del filtro.
 float lpfState = 0.0f;
 float hpfPrevInput = 0.0f;
 float hpfPrevOutput = 0.0f;
 
+// Buffers de efectos y cursores de escritura.
 float reverbBuffer1[REVERB_BUF_1] = {0.0f};
 float reverbBuffer2[REVERB_BUF_2] = {0.0f};
 int reverbIndex1 = 0;
@@ -169,6 +167,18 @@ int reverbIndex2 = 0;
 float delayBuffer[DELAY_BUFFER_SIZE] = {0.0f};
 int delayWriteIndex = 0;
 
+// Objetivos suavizados de parametros usados dentro del loop de audio.
+float smoothedLfoRateHz = 1.0f;
+float smoothedLfoDepthHz = 0.0f;
+float smoothedMasterGain = 0.0f;
+float smoothedFilterMorph = 0.0f;
+float smoothedReverbMix = 0.0f;
+float smoothedDelayMix = 0.0f;
+
+// Indice de canal en round-robin para escaneo de MUX.
+uint8_t muxScanChannel = 0;
+
+// Helper generico para limitar floats.
 float clampf(float value, float minValue, float maxValue) {
   if (value < minValue) {
     return minValue;
@@ -179,25 +189,12 @@ float clampf(float value, float minValue, float maxValue) {
   return value;
 }
 
+// Helper de interpolacion lineal para mapear controles normalizados a rangos reales.
 float mapLinear(float normalized, float minValue, float maxValue) {
   return minValue + normalized * (maxValue - minValue);
 }
 
-const char* waveName(WaveShape shape) {
-  switch (shape) {
-    case WAVE_SINE:
-      return "SIN";
-    case WAVE_SQUARE:
-      return "SQR";
-    case WAVE_TRIANGLE:
-      return "TRI";
-    case WAVE_SAW:
-      return "SAW";
-    default:
-      return "?";
-  }
-}
-
+// Nombres legibles usados por la OLED.
 const char* sirenWaveName(SirenWave shape) {
   switch (shape) {
     case SIREN_ORIGINAL:
@@ -215,64 +212,7 @@ const char* sirenWaveName(SirenWave shape) {
   }
 }
 
-const char* onOffText(bool enabled) {
-  return enabled ? "ON" : "OFF";
-}
-
-const char* lfoSlotName(LfoSlot slot) {
-  switch (slot) {
-    case LFO_SLOT_PITCH:
-      return "Pitch";
-    case LFO_SLOT_VOLUME:
-      return "Volume";
-    case LFO_SLOT_FILTER:
-      return "Filter";
-    case LFO_SLOT_REVERB:
-      return "Reverb";
-    case LFO_SLOT_DELAY:
-      return "Delay";
-    default:
-      return "?";
-  }
-}
-
-LfoState& selectedLfoRef() {
-  switch (selectedLfo) {
-    case LFO_SLOT_PITCH:
-      return pitchLfo;
-    case LFO_SLOT_VOLUME:
-      return volumeLfo;
-    case LFO_SLOT_FILTER:
-      return filterLfo;
-    case LFO_SLOT_REVERB:
-      return reverbLfo;
-    default:
-      return delayLfo;
-  }
-}
-
-void syncLfoFromPage() {
-  switch (currentPage) {
-    case PAGE_LFO_PITCH:
-      selectedLfo = LFO_SLOT_PITCH;
-      break;
-    case PAGE_LFO_VOLUME:
-      selectedLfo = LFO_SLOT_VOLUME;
-      break;
-    case PAGE_LFO_FILTER:
-      selectedLfo = LFO_SLOT_FILTER;
-      break;
-    case PAGE_LFO_REVERB:
-      selectedLfo = LFO_SLOT_REVERB;
-      break;
-    case PAGE_LFO_DELAY:
-      selectedLfo = LFO_SLOT_DELAY;
-      break;
-    default:
-      break;
-  }
-}
-
+// Inicializa un boton en modo pull-up y resetea estado de debounce.
 void initButton(DebouncedButton& btn, uint8_t pin) {
   btn.pin = pin;
   btn.lastReading = HIGH;
@@ -281,6 +221,7 @@ void initButton(DebouncedButton& btn, uint8_t pin) {
   pinMode(pin, INPUT_PULLUP);
 }
 
+// Helper de debounce que devuelve true una vez por pulsacion valida.
 bool updateButtonPressed(DebouncedButton& btn) {
   bool reading = digitalRead(btn.pin);
 
@@ -301,6 +242,7 @@ bool updateButtonPressed(DebouncedButton& btn) {
   return false;
 }
 
+// Selecciona canal activo del CD4067 por el bus de direccion de 4 bits.
 void selectMuxChannel(uint8_t channel) {
   digitalWrite(MUX_S0_PIN, channel & 0x01);
   digitalWrite(MUX_S1_PIN, (channel >> 1) & 0x01);
@@ -308,39 +250,88 @@ void selectMuxChannel(uint8_t channel) {
   digitalWrite(MUX_S3_PIN, (channel >> 3) & 0x01);
 }
 
+// Lee un canal del MUX con tiempo de asentamiento, lectura dummy y promediado.
 int readMuxRaw(uint8_t channel) {
   selectMuxChannel(channel);
-  delayMicroseconds(4);
-  return analogRead(MUX_SIG_PIN);
+  delayMicroseconds(MUX_SETTLE_US);
+
+  for (uint8_t i = 0; i < MUX_DUMMY_READS; i++) {
+    analogRead(MUX_SIG_PIN);
+    delayMicroseconds(MUX_INTER_SAMPLE_US);
+  }
+
+  uint32_t sum = 0;
+  for (uint8_t i = 0; i < MUX_AVG_SAMPLES; i++) {
+    sum += static_cast<uint32_t>(analogRead(MUX_SIG_PIN));
+    if (i + 1 < MUX_AVG_SAMPLES) {
+      delayMicroseconds(MUX_INTER_SAMPLE_US);
+    }
+  }
+
+  return static_cast<int>(sum / MUX_AVG_SAMPLES);
 }
 
+// Captura valores iniciales de controles al arranque para evitar saltos bruscos.
 void initPotStateFromHardware() {
-  for (int ch = 0; ch < MUX_CHANNELS; ch++) {
+  for (int ch = 0; ch < POT_CHANNELS; ch++) {
     int raw = readMuxRaw(ch);
     muxRawSmooth[ch] = static_cast<float>(raw);
 
     float normalized = clampf(muxRawSmooth[ch] / 4095.0f, 0.0f, 1.0f);
     potMapped[ch] = mapLinear(normalized, potDefs[ch].minValue, potDefs[ch].maxValue);
   }
+
+  smoothedLfoRateHz = potMapped[POT_LFO_RATE];
+  smoothedLfoDepthHz = potMapped[POT_LFO_DEPTH];
+  smoothedMasterGain = potMapped[POT_MASTER_GAIN];
+  smoothedFilterMorph = potMapped[POT_FILTER_MORPH];
+  smoothedReverbMix = potMapped[POT_REVERB_MIX];
+  smoothedDelayMix = potMapped[POT_DELAY_MIX];
 }
 
-float evalWaveByPhase(float phase, WaveShape shape) {
-  float t = phase / TWO_PI;
+// Actualiza un canal de control por ciclo para reducir crosstalk del MUX.
+void updateControls() {
+  int ch = static_cast<int>(muxScanChannel);
+  float previousMapped = potMapped[ch];
+  int raw = readMuxRaw(ch);
+  muxRawSmooth[ch] += POT_SMOOTH_ALPHA * (raw - muxRawSmooth[ch]);
 
-  switch (shape) {
-    case WAVE_SINE:
-      return sinf(phase);
-    case WAVE_SQUARE:
-      return (sinf(phase) >= 0.0f) ? 1.0f : -1.0f;
-    case WAVE_TRIANGLE:
-      return 2.0f * fabsf(2.0f * t - 1.0f) - 1.0f;
-    case WAVE_SAW:
-      return 2.0f * t - 1.0f;
-    default:
-      return 0.0f;
+  float normalized = clampf(muxRawSmooth[ch] / 4095.0f, 0.0f, 1.0f);
+  float mapped = mapLinear(normalized, potDefs[ch].minValue, potDefs[ch].maxValue);
+  if (fabsf(mapped - previousMapped) < potDeadband[ch]) {
+    mapped = previousMapped;
+  }
+  potMapped[ch] = mapped;
+
+  muxScanChannel = static_cast<uint8_t>((muxScanChannel + 1) % POT_CHANNELS);
+
+  if (updateButtonPressed(btnSirenWave)) {
+    sirenWave = static_cast<SirenWave>((sirenWave + 1) % SIREN_WAVE_COUNT);
+  }
+
+  if (updateButtonPressed(btnPage)) {
+    displayPage = (displayPage + 1) % 2;
   }
 }
 
+// Fuerza valores fijos conocidos en modo diagnostico.
+void applyFixedDiagnosticControls() {
+  potMapped[POT_LFO_RATE] = DIAG_FIXED_LFO_RATE_HZ;
+  potMapped[POT_LFO_DEPTH] = DIAG_FIXED_LFO_DEPTH_HZ;
+  potMapped[POT_MASTER_GAIN] = DIAG_FIXED_MASTER_GAIN;
+  potMapped[POT_FILTER_MORPH] = DIAG_FIXED_FILTER_MORPH;
+  potMapped[POT_REVERB_MIX] = DIAG_FIXED_REVERB_MIX;
+  potMapped[POT_DELAY_MIX] = DIAG_FIXED_DELAY_MIX;
+
+  smoothedLfoRateHz = DIAG_FIXED_LFO_RATE_HZ;
+  smoothedLfoDepthHz = DIAG_FIXED_LFO_DEPTH_HZ;
+  smoothedMasterGain = DIAG_FIXED_MASTER_GAIN;
+  smoothedFilterMorph = DIAG_FIXED_FILTER_MORPH;
+  smoothedReverbMix = DIAG_FIXED_REVERB_MIX;
+  smoothedDelayMix = DIAG_FIXED_DELAY_MIX;
+}
+
+// Genera una muestra de forma de onda para una fase dada.
 float evalSirenCarrier(float phase, SirenWave shape) {
   switch (shape) {
     case SIREN_ORIGINAL: {
@@ -365,15 +356,7 @@ float evalSirenCarrier(float phase, SirenWave shape) {
   }
 }
 
-float nextLfoRaw(LfoState& lfo) {
-  float value = evalWaveByPhase(lfo.phase, lfo.shape);
-  lfo.phase += TWO_PI * lfo.rateHz / SAMPLE_RATE;
-  if (lfo.phase >= TWO_PI) {
-    lfo.phase -= TWO_PI;
-  }
-  return value;
-}
-
+// Filtro LP/HP con morph: morph<0 favorece LP, morph>0 favorece HP.
 float processFilter(float input, float cutoffHz, float morph) {
   float dt = 1.0f / SAMPLE_RATE;
   float rc = 1.0f / (TWO_PI * cutoffHz);
@@ -386,10 +369,12 @@ float processFilter(float input, float cutoffHz, float morph) {
   hpfPrevInput = input;
   hpfPrevOutput = hp;
 
-  float mix = clampf((morph + 1.0f) * 0.5f, 0.0f, 1.0f);
-  return (1.0f - mix) * lpfState + mix * hp;
+  float amount = clampf(fabsf(morph), 0.0f, 1.0f);
+  float selected = (morph < 0.0f) ? lpfState : hp;
+  return (1.0f - amount) * input + amount * selected;
 }
 
+// Reverb liviana de dos taps con realimentacion.
 float processReverb(float input, float mix, float decay) {
   float y1 = reverbBuffer1[reverbIndex1];
   float y2 = reverbBuffer2[reverbIndex2];
@@ -404,14 +389,10 @@ float processReverb(float input, float mix, float decay) {
   return input * (1.0f - mix) + wet * mix;
 }
 
-float processDelay(float input, float delayMs, float feedback, float mix) {
+// Delay simple con tiempo fijo y realimentacion.
+float processDelay(float input, float mix, float delayMs, float feedback) {
   int delaySamples = static_cast<int>(delayMs * SAMPLE_RATE / 1000.0f);
-  if (delaySamples < 1) {
-    delaySamples = 1;
-  }
-  if (delaySamples >= DELAY_BUFFER_SIZE) {
-    delaySamples = DELAY_BUFFER_SIZE - 1;
-  }
+  delaySamples = static_cast<int>(clampf(static_cast<float>(delaySamples), 1.0f, static_cast<float>(DELAY_BUFFER_SIZE - 1)));
 
   int readIndex = delayWriteIndex - delaySamples;
   if (readIndex < 0) {
@@ -429,49 +410,55 @@ float processDelay(float input, float delayMs, float feedback, float mix) {
   return input * (1.0f - mix) + delayed * mix;
 }
 
-void updateControls() {
-  for (int ch = 0; ch < MUX_CHANNELS; ch++) {
-    int raw = readMuxRaw(ch);
-    muxRawSmooth[ch] += 0.18f * (raw - muxRawSmooth[ch]);
-    float normalized = clampf(muxRawSmooth[ch] / 4095.0f, 0.0f, 1.0f);
-    potMapped[ch] = mapLinear(normalized, potDefs[ch].minValue, potDefs[ch].maxValue);
+// Decide cuando refrescar OLED para limitar actividad I2C y acople de ruido.
+bool displayNeedsUpdate(uint32_t nowMs) {
+  static bool initialized = false;
+  static uint32_t lastDisplayMs = 0;
+  static uint32_t lastForcedMs = 0;
+  static uint8_t lastPage = 0;
+  static SirenWave lastWave = SIREN_ORIGINAL;
+  static float lastPot[POT_CHANNELS] = {0.0f};
+
+  if (!initialized) {
+    initialized = true;
+    lastPage = displayPage;
+    lastWave = sirenWave;
+    for (int ch = 0; ch < POT_CHANNELS; ch++) {
+      lastPot[ch] = potMapped[ch];
+    }
+    lastDisplayMs = nowMs;
+    lastForcedMs = nowMs;
+    return true;
   }
 
-  pitchLfo.rateHz = potMapped[POT_PITCH_RATE];
-  pitchLfo.depth = potMapped[POT_PITCH_DEPTH];
-
-  volumeLfo.rateHz = potMapped[POT_VOLUME_RATE];
-  volumeLfo.depth = potMapped[POT_VOLUME_DEPTH];
-
-  filterLfo.rateHz = potMapped[POT_FILTER_RATE];
-  filterLfo.depth = potMapped[POT_FILTER_DEPTH];
-
-  reverbLfo.rateHz = potMapped[POT_FILTER_RATE];
-  reverbLfo.depth = potMapped[POT_FILTER_DEPTH];
-
-  delayLfo.rateHz = potMapped[POT_FILTER_RATE];
-  delayLfo.depth = potMapped[POT_FILTER_DEPTH];
-
-  if (updateButtonPressed(btnSelectLfo)) {
-    currentPage = static_cast<DisplayPage>((currentPage + 1) % PAGE_COUNT);
-    syncLfoFromPage();
+  bool changed = (displayPage != lastPage) || (sirenWave != lastWave);
+  for (int ch = 0; ch < POT_CHANNELS; ch++) {
+    if (fabsf(potMapped[ch] - lastPot[ch]) > (potDeadband[ch] * 2.0f)) {
+      changed = true;
+      break;
+    }
   }
 
-  if (currentPage != PAGE_SIREN && updateButtonPressed(btnChangeWave)) {
-    LfoState& lfo = selectedLfoRef();
-    lfo.shape = static_cast<WaveShape>((lfo.shape + 1) % WAVE_COUNT);
+  bool dueByDelta = (nowMs - lastDisplayMs >= OLED_REFRESH_MIN_MS) && changed;
+  bool dueByForce = (nowMs - lastForcedMs >= OLED_REFRESH_FORCE_MS);
+  if (!(dueByDelta || dueByForce)) {
+    return false;
   }
 
-  if (updateButtonPressed(btnSirenWave)) {
-    sirenWave = static_cast<SirenWave>((sirenWave + 1) % SIREN_WAVE_COUNT);
+  lastPage = displayPage;
+  lastWave = sirenWave;
+  for (int ch = 0; ch < POT_CHANNELS; ch++) {
+    lastPot[ch] = potMapped[ch];
+  }
+  lastDisplayMs = nowMs;
+  if (dueByForce) {
+    lastForcedMs = nowMs;
   }
 
-  if (currentPage != PAGE_SIREN && updateButtonPressed(btnToggleLfo)) {
-    LfoState& lfo = selectedLfoRef();
-    lfo.enabled = !lfo.enabled;
-  }
+  return true;
 }
 
+// Dibuja la pagina OLED seleccionada con el estado actual de controles.
 void drawDisplay() {
   if (!oledReady) {
     return;
@@ -482,113 +469,92 @@ void drawDisplay() {
   display.setTextSize(1);
   display.setTextColor(SSD1306_WHITE);
 
-  if (currentPage == PAGE_SIREN) {
+  if (displayPage == 0) {
     display.setCursor(0, 0);
-    display.print("SECCION SIRENA");
+    display.print("SIRENA SIMPLE");
 
-    display.setCursor(0, 8);
+    display.setCursor(0, 10);
     display.print("Wave: ");
     display.print(sirenWaveName(sirenWave));
 
-    // Deja una linea en blanco despues de Wave para separar la guia.
-    display.setCursor(0, 26);
-    display.print("Rojo: wave sirena");
+    display.setCursor(0, 20);
+    display.print("LFO R:");
+    display.print(potMapped[POT_LFO_RATE], 2);
+    display.print(" D:");
+    display.print(potMapped[POT_LFO_DEPTH], 0);
 
-    display.setCursor(0, 36);
-    display.print("Blanco: sel LFO");
+    display.setCursor(0, 32);
+    display.print("Gain:");
+    display.print(static_cast<int>(potMapped[POT_MASTER_GAIN] * 100.0f));
+    display.print("%  F:");
+    display.print(potMapped[POT_FILTER_MORPH], 2);
 
-    display.setCursor(0, 46);
-    display.print("Verde: ON/OFF LFO");
+    display.setCursor(0, 44);
+    display.print("Rev:");
+    display.print(static_cast<int>(potMapped[POT_REVERB_MIX] * 100.0f));
+    display.print("%  Dly:");
+    display.print(static_cast<int>(potMapped[POT_DELAY_MIX] * 100.0f));
+    display.print("%");
 
     display.setCursor(0, 56);
-    display.print("Negro: wave LFO");
+    display.print("I0R I1D I2G I3F I4R I5D");
   } else {
-    LfoState& activeLfo = selectedLfoRef();
-
     display.setCursor(0, 0);
-    display.print("LFO ");
-    display.print(lfoSlotName(selectedLfo));
+    display.print("CTRL DETAIL");
 
-    display.setCursor(0, 12);
-    display.print("State: ");
-    display.print(onOffText(activeLfo.enabled));
+    display.setCursor(0, 10);
+    display.print("I0 RateHz: ");
+    display.print(potMapped[POT_LFO_RATE], 2);
 
-    display.setCursor(0, 22);
-    display.print("Wave: ");
-    display.print(waveName(activeLfo.shape));
+    display.setCursor(0, 20);
+    display.print("I1 DepthHz:");
+    display.print(potMapped[POT_LFO_DEPTH], 0);
 
-    if (selectedLfo == LFO_SLOT_PITCH) {
-      display.setCursor(0, 34);
-      display.print("Rate: ");
-      display.print(potMapped[POT_PITCH_RATE], 2);
-      display.setCursor(0, 46);
-      display.print("Depth: ");
-      display.print(potMapped[POT_PITCH_DEPTH], 0);
-    } else if (selectedLfo == LFO_SLOT_VOLUME) {
-      display.setCursor(0, 34);
-      display.print("Rate: ");
-      display.print(potMapped[POT_VOLUME_RATE], 2);
-      display.setCursor(0, 46);
-      display.print("Depth: ");
-      display.print(potMapped[POT_VOLUME_DEPTH], 2);
-    } else if (selectedLfo == LFO_SLOT_FILTER) {
-      display.setCursor(0, 34);
-      display.print("Base: ");
-      display.print(potMapped[POT_FILTER_BASE], 2);
-      display.setCursor(0, 44);
-      display.print("Rate: ");
-      display.print(potMapped[POT_FILTER_RATE], 2);
-      display.setCursor(0, 54);
-      display.print("Depth: ");
-      display.print(potMapped[POT_FILTER_DEPTH], 2);
-    } else if (selectedLfo == LFO_SLOT_REVERB) {
-      display.setCursor(0, 34);
-      display.print("Mix: ");
-      display.print(potMapped[POT_REVERB_MIX], 2);
-      display.setCursor(0, 46);
-      display.print("Decay: ");
-      display.print(potMapped[POT_REVERB_DECAY], 2);
-    } else {
-      display.setCursor(0, 34);
-      display.print("Time: ");
-      display.print(potMapped[POT_DELAY_TIME], 0);
-      display.setCursor(0, 44);
-      display.print("Fdbk: ");
-      display.print(potMapped[POT_DELAY_FEEDBACK], 2);
-      display.setCursor(0, 54);
-      display.print("Mix: ");
-      display.print(potMapped[POT_DELAY_MIX], 2);
-    }
+    display.setCursor(0, 30);
+    display.print("I2 Gain:   ");
+    display.print(potMapped[POT_MASTER_GAIN], 2);
+
+    display.setCursor(0, 40);
+    display.print("I3 Filter: ");
+    display.print(potMapped[POT_FILTER_MORPH], 2);
+
+    display.setCursor(0, 50);
+    display.print("I4 Rev: ");
+    display.print(potMapped[POT_REVERB_MIX], 2);
+    display.print(" I5 Dly: ");
+    display.print(potMapped[POT_DELAY_MIX], 2);
   }
 
   display.display();
 }
 
+// Configura el periferico I2S del ESP32 y asigna pines de audio.
 void setupI2S() {
-  i2s_config_t i2s_config = {};
-  i2s_config.mode = static_cast<i2s_mode_t>(I2S_MODE_MASTER | I2S_MODE_TX);
-  i2s_config.sample_rate = SAMPLE_RATE;
-  i2s_config.bits_per_sample = I2S_BITS_PER_SAMPLE_16BIT;
-  i2s_config.channel_format = I2S_CHANNEL_FMT_RIGHT_LEFT;
-  i2s_config.communication_format = I2S_COMM_FORMAT_STAND_I2S;
-  i2s_config.intr_alloc_flags = ESP_INTR_FLAG_LEVEL1;
-  i2s_config.dma_buf_count = 8;
-  i2s_config.dma_buf_len = BUFFER_SIZE;
-  i2s_config.use_apll = false;
-  i2s_config.tx_desc_auto_clear = true;
-  i2s_config.fixed_mclk = 0;
+  i2s_config_t i2sConfig = {};
+  i2sConfig.mode = static_cast<i2s_mode_t>(I2S_MODE_MASTER | I2S_MODE_TX);
+  i2sConfig.sample_rate = SAMPLE_RATE;
+  i2sConfig.bits_per_sample = I2S_BITS_PER_SAMPLE_16BIT;
+  i2sConfig.channel_format = I2S_CHANNEL_FMT_RIGHT_LEFT;
+  i2sConfig.communication_format = I2S_COMM_FORMAT_STAND_I2S;
+  i2sConfig.intr_alloc_flags = ESP_INTR_FLAG_LEVEL1;
+  i2sConfig.dma_buf_count = 8;
+  i2sConfig.dma_buf_len = BUFFER_SIZE;
+  i2sConfig.use_apll = false;
+  i2sConfig.tx_desc_auto_clear = true;
+  i2sConfig.fixed_mclk = 0;
 
-  i2s_pin_config_t pin_config = {};
-  pin_config.bck_io_num = I2S_BCK_PIN;
-  pin_config.ws_io_num = I2S_WS_PIN;
-  pin_config.data_out_num = I2S_DO_PIN;
-  pin_config.data_in_num = I2S_PIN_NO_CHANGE;
+  i2s_pin_config_t pinConfig = {};
+  pinConfig.bck_io_num = I2S_BCK_PIN;
+  pinConfig.ws_io_num = I2S_WS_PIN;
+  pinConfig.data_out_num = I2S_DO_PIN;
+  pinConfig.data_in_num = I2S_PIN_NO_CHANGE;
 
-  i2s_driver_install(I2S_PORT, &i2s_config, 0, nullptr);
-  i2s_set_pin(I2S_PORT, &pin_config);
+  i2s_driver_install(I2S_PORT, &i2sConfig, 0, nullptr);
+  i2s_set_pin(I2S_PORT, &pinConfig);
   i2s_set_clk(I2S_PORT, SAMPLE_RATE, I2S_BITS_PER_SAMPLE_16BIT, I2S_CHANNEL_STEREO);
 }
 
+// Inicializacion de hardware y subsistemas.
 void setup() {
   Serial.begin(115200);
   delay(200);
@@ -601,112 +567,139 @@ void setup() {
   pinMode(MUX_S2_PIN, OUTPUT);
   pinMode(MUX_S3_PIN, OUTPUT);
 
-  initPotStateFromHardware();
-
-  initButton(btnSelectLfo, BTN_SELECT_LFO_PIN);
-  initButton(btnChangeWave, BTN_CHANGE_WAVE_PIN);
   initButton(btnSirenWave, BTN_SIREN_WAVE_PIN);
-  initButton(btnToggleLfo, BTN_TOGGLE_LFO_PIN);
+  initButton(btnPage, BTN_PAGE_PIN);
 
-  Wire.begin(OLED_SDA_PIN, OLED_SCL_PIN);
-  oledReady = display.begin(SSD1306_SWITCHCAPVCC, OLED_ADDR);
-  if (oledReady) {
-    display.clearDisplay();
-    display.setTextSize(1);
-    display.setTextColor(SSD1306_WHITE);
-    display.setCursor(0, 0);
-    display.println("Siren test boot...");
-    display.display();
+  if (DIAG_FIXED_CONTROLS) {
+    applyFixedDiagnosticControls();
+  } else {
+    initPotStateFromHardware();
+  }
+
+  if (!DIAG_DISABLE_OLED) {
+    Wire.begin(OLED_SDA_PIN, OLED_SCL_PIN);
+    oledReady = display.begin(SSD1306_SWITCHCAPVCC, OLED_ADDR);
+    if (oledReady) {
+      display.clearDisplay();
+      display.setTextSize(1);
+      display.setTextColor(SSD1306_WHITE);
+      display.setCursor(0, 0);
+      display.println("Synth simple boot");
+      display.display();
+    }
   }
 
   setupI2S();
-  Serial.println("Siren test ready (Synth HW map)");
+  Serial.println("Synth simple mode ready");
 }
 
+// Loop principal: controles -> sintesis por bloques -> salida I2S -> OLED opcional.
 void loop() {
-  updateControls();
+  static uint32_t lastControlMs = 0;
+  uint32_t now = millis();
+  if (!DIAG_FIXED_CONTROLS && (now - lastControlMs >= CONTROL_UPDATE_MS)) {
+    updateControls();
+    lastControlMs = now;
+  }
 
-  int16_t audio_buffer[BUFFER_SIZE * 2];
+  if (DIAG_FIXED_CONTROLS) {
+    potMapped[POT_LFO_RATE] = DIAG_FIXED_LFO_RATE_HZ;
+    potMapped[POT_LFO_DEPTH] = DIAG_FIXED_LFO_DEPTH_HZ;
+    potMapped[POT_MASTER_GAIN] = DIAG_FIXED_MASTER_GAIN;
+    potMapped[POT_FILTER_MORPH] = DIAG_FIXED_FILTER_MORPH;
+    potMapped[POT_REVERB_MIX] = DIAG_FIXED_REVERB_MIX;
+    potMapped[POT_DELAY_MIX] = DIAG_FIXED_DELAY_MIX;
+  }
+
+  const float targetLfoRateHz = potMapped[POT_LFO_RATE];
+  const float targetLfoDepthHz = potMapped[POT_LFO_DEPTH];
+  const float targetMasterGain = potMapped[POT_MASTER_GAIN];
+  const float targetFilterMorph = potMapped[POT_FILTER_MORPH];
+  const float targetReverbMix = potMapped[POT_REVERB_MIX];
+  const float targetDelayMix = potMapped[POT_DELAY_MIX];
+
+  // Buffer estereo intercalado (L,R,L,R...).
+  int16_t audioBuffer[BUFFER_SIZE * 2];
   const float sirenInc = TWO_PI * SIREN_RATE_HZ / SAMPLE_RATE;
 
   for (int i = 0; i < BUFFER_SIZE; ++i) {
-    float sweep = sinf(sirenPhase);
-    float freq = SIREN_CENTER_HZ + SIREN_SWEEP_HZ * sweep;
+    float sample = 0.0f;
 
-    if (pitchLfo.enabled) {
-      float pitchRaw = nextLfoRaw(pitchLfo);
-      freq += pitchRaw * pitchLfo.depth;
+    if (DIAG_USE_TONETEST_CORE) {
+      // Nucleo minimo alternativo usado solo para diagnostico A/B.
+      const float sweep = 0.5f * (sinf(toneTestSweepPhase) + 1.0f);
+      const float frequency = 420.0f + (960.0f - 420.0f) * sweep;
+
+      const float fundamental = sinf(carrierPhase);
+      const float harmonic = 0.22f * sinf(carrierPhase * 2.0f);
+      sample = (fundamental + harmonic) * (0.18f * DIAG_FIXED_MASTER_GAIN);
+
+      carrierPhase += TWO_PI * frequency / SAMPLE_RATE;
+      if (carrierPhase >= TWO_PI) {
+        carrierPhase -= TWO_PI;
+      }
+
+      toneTestSweepPhase += TWO_PI * 0.75f / SAMPLE_RATE;
+      if (toneTestSweepPhase >= TWO_PI) {
+        toneTestSweepPhase -= TWO_PI;
+      }
+    } else {
+      // Ruta normal de audio de Synth.
+      smoothedLfoRateHz += (targetLfoRateHz - smoothedLfoRateHz) * PARAM_SMOOTH_ALPHA;
+      smoothedLfoDepthHz += (targetLfoDepthHz - smoothedLfoDepthHz) * PARAM_SMOOTH_ALPHA;
+      smoothedMasterGain += (targetMasterGain - smoothedMasterGain) * PARAM_SMOOTH_ALPHA;
+      smoothedFilterMorph += (targetFilterMorph - smoothedFilterMorph) * PARAM_SMOOTH_ALPHA;
+      smoothedReverbMix += (targetReverbMix - smoothedReverbMix) * PARAM_SMOOTH_ALPHA;
+      smoothedDelayMix += (targetDelayMix - smoothedDelayMix) * PARAM_SMOOTH_ALPHA;
+
+      float sweep = sinf(sirenPhase);
+      float lfo = sinf(lfoPhase);
+
+      float freq = SIREN_CENTER_HZ + SIREN_SWEEP_HZ * sweep + lfo * smoothedLfoDepthHz;
+      freq = clampf(freq, 60.0f, 2800.0f);
+
+      // Portadora + ganancia.
+      sample = evalSirenCarrier(carrierPhase, sirenWave);
+      sample *= OUTPUT_GAIN_MAX * smoothedMasterGain;
+
+      // Filtro y efectos temporales.
+      float cutoff = 280.0f + fabsf(smoothedFilterMorph) * 6500.0f;
+      sample = processFilter(sample, cutoff, smoothedFilterMorph);
+
+      sample = processReverb(sample, smoothedReverbMix, 0.78f);
+
+      sample = processDelay(sample, smoothedDelayMix, 180.0f, 0.32f);
+
+      carrierPhase += TWO_PI * freq / SAMPLE_RATE;
+      if (carrierPhase >= TWO_PI) {
+        carrierPhase -= TWO_PI;
+      }
+
+      sirenPhase += sirenInc;
+      if (sirenPhase >= TWO_PI) {
+        sirenPhase -= TWO_PI;
+      }
+
+      lfoPhase += TWO_PI * smoothedLfoRateHz / SAMPLE_RATE;
+      if (lfoPhase >= TWO_PI) {
+        lfoPhase -= TWO_PI;
+      }
     }
-    freq = clampf(freq, 60.0f, 2800.0f);
 
-    float amp = OUTPUT_GAIN;
-    if (volumeLfo.enabled) {
-      float volumeRaw = nextLfoRaw(volumeLfo);
-      float trem = (1.0f - volumeLfo.depth) + volumeLfo.depth * ((volumeRaw + 1.0f) * 0.5f);
-      amp *= clampf(trem, 0.0f, 1.2f);
-    }
-
-    float carrier = evalSirenCarrier(carrierPhase, sirenWave);
-    float sample = carrier * amp;
-
-    float filterBase = potMapped[POT_FILTER_BASE];
-    if (filterLfo.enabled) {
-      float filterRaw = nextLfoRaw(filterLfo);
-      float filterMorph = filterBase;
-      filterMorph += filterRaw * filterLfo.depth;
-      filterMorph = clampf(filterMorph, -1.0f, 1.0f);
-
-      float cutoff = 280.0f + fabsf(filterMorph) * 6500.0f;
-      sample = processFilter(sample, cutoff, filterMorph);
-    } else if (fabsf(filterBase) > 0.03f) {
-      float filterMorph = clampf(filterBase, -1.0f, 1.0f);
-      float cutoff = 280.0f + fabsf(filterMorph) * 6500.0f;
-      sample = processFilter(sample, cutoff, filterMorph);
-    }
-
-    if (reverbLfo.enabled) {
-      float reverbMix = potMapped[POT_REVERB_MIX];
-      float reverbDecay = potMapped[POT_REVERB_DECAY];
-      float revRaw = nextLfoRaw(reverbLfo);
-      reverbMix = clampf(reverbMix + revRaw * 0.35f * reverbLfo.depth, 0.0f, 0.85f);
-      reverbDecay = clampf(reverbDecay + revRaw * 0.20f * reverbLfo.depth, 0.05f, 0.98f);
-      sample = processReverb(sample, reverbMix, reverbDecay);
-    }
-
-    if (delayLfo.enabled) {
-      float delayTime = potMapped[POT_DELAY_TIME];
-      float delayFeedback = potMapped[POT_DELAY_FEEDBACK];
-      float delayMix = potMapped[POT_DELAY_MIX];
-      float dlyRaw = nextLfoRaw(delayLfo);
-      delayTime = clampf(delayTime + dlyRaw * 100.0f * delayLfo.depth, 10.0f, 450.0f);
-      delayFeedback = clampf(delayFeedback + dlyRaw * 0.25f * delayLfo.depth, 0.0f, 0.95f);
-      delayMix = clampf(delayMix + dlyRaw * 0.30f * delayLfo.depth, 0.0f, 0.90f);
-      sample = processDelay(sample, delayTime, delayFeedback, delayMix);
-    }
-
+    // Convierte float [-1..1] a PCM de 16 bits con signo.
     sample = clampf(sample, -1.0f, 1.0f);
-    int16_t s = static_cast<int16_t>(clampf(sample, -1.0f, 1.0f) * 32767.0f);
+    int16_t s = static_cast<int16_t>(sample * 32767.0f);
 
-    audio_buffer[i * 2] = s;
-    audio_buffer[i * 2 + 1] = s;
+    audioBuffer[i * 2] = s;
+    audioBuffer[i * 2 + 1] = s;
 
-    carrierPhase += TWO_PI * freq / SAMPLE_RATE;
-    if (carrierPhase >= TWO_PI) {
-      carrierPhase -= TWO_PI;
-    }
-
-    sirenPhase += sirenInc;
-    if (sirenPhase >= TWO_PI) {
-      sirenPhase -= TWO_PI;
-    }
   }
 
+  // Envia un bloque de audio al DMA de I2S.
   size_t bytesWritten = 0;
-  i2s_write(I2S_PORT, audio_buffer, sizeof(audio_buffer), &bytesWritten, portMAX_DELAY);
+  i2s_write(I2S_PORT, audioBuffer, sizeof(audioBuffer), &bytesWritten, portMAX_DELAY);
 
-  static uint32_t lastDisplayMs = 0;
-  if (millis() - lastDisplayMs > 90) {
+  if (!DIAG_DISABLE_OLED && !DIAG_DISABLE_OLED_REFRESH && displayNeedsUpdate(millis())) {
     drawDisplay();
-    lastDisplayMs = millis();
   }
 }

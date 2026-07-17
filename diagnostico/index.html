@@ -1,0 +1,1074 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Diagnóstico Synth (ESP32 + PCM5102A)</title>
+<style>
+  :root { --bg:#0f1115; --panel:#181b22; --border:#2a2f3a; --text:#e6e8eb; --muted:#9aa3af; --accent:#5fb3ff; --accent2:#7fe0a8; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: -apple-system, Segoe UI, Roboto, sans-serif; background:var(--bg); color:var(--text); }
+  header { padding: 1.2rem 1.5rem; border-bottom:1px solid var(--border); }
+  header h1 { margin:0 0 0.2rem; font-size:1.3rem; }
+  header p { margin:0; color:var(--muted); font-size:0.85rem; }
+  main { padding: 1.5rem; max-width: 1200px; margin: 0 auto; }
+  .tabs { display:flex; gap:0.5rem; margin-bottom:1.2rem; flex-wrap:wrap; }
+  .tab-btn { background:var(--panel); color:var(--text); border:1px solid var(--border); padding:0.5rem 1rem; border-radius:6px; cursor:pointer; font-size:0.9rem; }
+  .tab-btn.active { border-color: var(--accent); color: var(--accent); }
+  .panel { display:none; }
+  .panel.active { display:block; }
+  input[type=search] { width:100%; padding:0.7rem 1rem; border-radius:8px; border:1px solid var(--border); background:var(--panel); color:var(--text); font-size:1rem; margin-bottom:1rem; }
+  .symptom-list { display:flex; flex-wrap:wrap; gap:0.4rem; margin-bottom:1.2rem; }
+  .symptom-chip { background:var(--panel); border:1px solid var(--border); color:var(--text); padding:0.35rem 0.7rem; border-radius:999px; cursor:pointer; font-size:0.82rem; }
+  .symptom-chip:hover { border-color:var(--accent); }
+  .result-card { background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:1.2rem; margin-bottom:1rem; }
+  .result-card h3 { margin-top:0; color:var(--accent); }
+  .result-card ul { margin: 0.3rem 0; padding-left: 1.2rem; }
+  .tag-row { display:flex; flex-wrap:wrap; gap:0.4rem; margin-top:0.6rem; }
+  .tag { font-size:0.78rem; padding:0.2rem 0.6rem; border-radius:6px; }
+  .tag.hw { background:#2a1f12; color:#e0b070; }
+  .tag.fw { background:#10261c; color:var(--accent2); }
+  table { width:100%; border-collapse:collapse; margin-bottom:1.5rem; font-size:0.85rem; }
+  th, td { text-align:left; padding:0.5rem 0.6rem; border-bottom:1px solid var(--border); vertical-align:top; }
+  th { color:var(--muted); font-weight:600; }
+  code { background:#10131a; padding:0.1rem 0.35rem; border-radius:4px; font-size:0.85em; }
+  .flow { background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:1rem 1.2rem; white-space:pre; overflow-x:auto; font-family: Consolas, monospace; font-size:0.8rem; line-height:1.5; }
+  .updated { color:var(--muted); font-size:0.8rem; margin-top:2rem; }
+  .empty { color:var(--muted); padding:1rem 0; }
+
+  /* Esquemático */
+  #schematicWrap { background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:0.5rem; overflow:auto; }
+  .sch-block rect { fill:#10131a; stroke:var(--accent); stroke-width:1.5; rx:8; }
+  .sch-block:hover rect { stroke:var(--accent2); fill:#141a24; }
+  .sch-block text.sch-title { fill:var(--text); font-size:13px; font-weight:600; }
+  .sch-block text.sch-pin { fill:var(--muted); font-size:9.5px; font-family: Consolas, monospace; }
+  .sch-wire { stroke-width:1.8; fill:none; cursor:pointer; }
+  .sch-wire:hover { stroke-width:3; }
+  .sch-wire-label { fill:var(--muted); font-size:9px; font-family: Consolas, monospace; }
+  .sch-tooltip { position:absolute; max-width:280px; background:#0a0c10; border:1px solid var(--accent); border-radius:8px; padding:0.6rem 0.8rem; font-size:0.8rem; pointer-events:none; display:none; z-index:10; }
+  .sch-tooltip b { color:var(--accent); }
+
+  /* Osciloscopio en vivo */
+  .scope-toolbar { display:flex; flex-wrap:wrap; gap:0.6rem; align-items:center; margin-bottom:0.8rem; }
+  .scope-toolbar button { background:var(--panel); color:var(--text); border:1px solid var(--border); padding:0.45rem 0.9rem; border-radius:6px; cursor:pointer; font-size:0.85rem; }
+  .scope-toolbar button:hover { border-color:var(--accent); }
+  .scope-toolbar button:disabled { opacity:0.4; cursor:default; }
+  .scope-status { font-size:0.8rem; color:var(--muted); }
+  .scope-status.live { color:var(--accent2); }
+  .scope-layout { display:flex; gap:1rem; align-items:flex-start; flex-wrap:wrap; }
+  .scope-channels { background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:0.8rem; min-width:190px; font-size:0.85rem; }
+  .scope-channels label { display:flex; align-items:center; gap:0.4rem; margin-bottom:0.5rem; cursor:pointer; }
+  .scope-canvas-wrap { background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:0.6rem; flex:1; min-width:300px; }
+  #liveScopeCanvas { width:100%; height:380px; background:#0a0c10; border-radius:6px; cursor:grab; touch-action:none; }
+  #liveScopeCanvas:active { cursor:grabbing; }
+  .scope-readout { background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:0.8rem; min-width:190px; font-size:0.78rem; font-family: Consolas, monospace; white-space:pre; }
+  #scopeAxisToggle { border-color: var(--accent); color: var(--accent); font-weight:600; min-width:140px; }
+  .scope-scale-row { background:var(--panel); border:1px solid var(--border); border-radius:8px; padding:0.5rem 0.8rem; }
+  .scope-scale-tag { min-width:64px; font-weight:600; }
+  .scope-scale-value { min-width:90px; font-family: Consolas, monospace; color:var(--accent2); }
+  .scope-slider { flex:1; min-width:200px; accent-color: var(--accent); }
+  .scope-hint { color:var(--muted); font-size:0.78rem; margin-top:0.5rem; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Diagnóstico — Synth (ESP32 + PCM5102A)</h1>
+  <p>Herramienta local de referencia. Los datos vienen de <code>data.json</code> — edítalo para mantenerlo sincronizado con el hardware/firmware real.</p>
+</header>
+<main>
+  <div class="tabs">
+    <button class="tab-btn active" data-tab="sintomas">Buscar por síntoma</button>
+    <button class="tab-btn" data-tab="mapa">Mapa del sistema</button>
+    <button class="tab-btn" data-tab="esquematico">Esquemático</button>
+    <button class="tab-btn" data-tab="scope">Osciloscopio en vivo</button>
+  </div>
+
+  <section id="sintomas" class="panel active">
+    <input type="search" id="search" placeholder="Escribe un síntoma (ej: distorsión, ruido, drift de pitch)...">
+    <div class="symptom-list" id="symptomChips"></div>
+    <div id="results"></div>
+  </section>
+
+  <section id="mapa" class="panel">
+    <h2>Bloques de hardware</h2>
+    <table>
+      <thead><tr><th>Bloque</th><th>Función</th><th>Componentes</th><th>Señal</th><th>Pines</th></tr></thead>
+      <tbody id="hwTable"></tbody>
+    </table>
+
+    <h2>Módulos de firmware</h2>
+    <table>
+      <thead><tr><th>Función</th><th>Archivo:línea</th><th>Responsabilidad</th><th>Periféricos</th></tr></thead>
+      <tbody id="fwTable"></tbody>
+    </table>
+
+    <h2>Flujo de audio</h2>
+    <div class="flow" id="flowDiagram">Oscilador (LFOs pitch) → VCA (Volume LFO) → Filtro (Filter LFO) → Reverb → Delay → DC Block → Clamp → I2S → DAC PCM5102A → Salida analógica</div>
+  </section>
+
+  <section id="esquematico" class="panel">
+    <p class="scope-hint">Diagrama de bloques estilo esquemático con cada pin individual y su cableado (no es un esquemático eléctrico con símbolos de componentes, sino la topología de conexión real punto a punto). Pasa el mouse sobre un bloque o un cable para ver el detalle. Las posiciones, pines y conexiones vienen de <code>data.json</code> (campos <code>posicion</code>, <code>pinesEsquema</code> y <code>conexiones</code>).</p>
+    <div class="scope-toolbar">
+      <span class="scope-status" id="schLegend"></span>
+    </div>
+    <div id="schematicWrap"></div>
+  </section>
+
+  <section id="scope" class="panel">
+    <p class="scope-hint">
+      Osciloscopio multicanal por extracción: a diferencia de un modo "en vivo" que pide capturas sin parar (y que en la práctica
+      sobrecarga la conexión y puede afectar al audio), acá el ESP32 solo se comunica con el navegador durante una ventana
+      explícita: desde que apretás <b>"Extraer datos"</b> hasta que apretás <b>"Detener extracción"</b>. Mientras tanto se van
+      acumulando las mediciones (sin graficar nada todavía, para no agregar carga extra). Una vez detenida la extracción, podés
+      <b>descargar los datos en CSV</b> para analizarlos en otra herramienta, o <b>graficarlos</b> acá mismo — ambas acciones
+      trabajan 100% con los datos ya guardados en el navegador, sin volver a consultar al ESP32.
+    </p>
+    <div class="scope-toolbar">
+      <label style="display:flex; align-items:center; gap:0.4rem;">
+        <input type="radio" name="scopeMode" id="scopeModeUsb" checked> USB (Web Serial)
+      </label>
+      <label style="display:flex; align-items:center; gap:0.4rem;">
+        <input type="radio" name="scopeMode" id="scopeModeWifi"> Red (WiFi, sin USB)
+      </label>
+      <input type="text" id="scopeWifiIp" placeholder="IP del ESP32 (ej. 192.168.1.50)" style="padding:0.4rem 0.6rem; border-radius:6px; border:1px solid var(--border); background:var(--panel); color:var(--text); width:220px;" disabled>
+    </div>
+    <div class="scope-toolbar">
+      <button id="scopeExtractBtn">Extraer datos</button>
+      <button id="scopeStopExtractBtn" disabled>Detener extracción</button>
+      <span class="scope-status" id="scopeExtractStatus">Sin extracción en curso.</span>
+    </div>
+    <div class="scope-toolbar">
+      <button id="scopeDownloadCsvBtn" disabled>Descargar CSV</button>
+      <button id="scopePlotBtn" disabled>Graficar</button>
+      <button id="scopeClearDataBtn" disabled>Borrar datos extraídos</button>
+    </div>
+    <div id="scopeUnsupported" class="empty" style="display:none;"></div>
+
+    <div id="scopePlotWrap" style="display:none;">
+      <div class="scope-toolbar">
+        <button id="scopeAxisToggle">Eje activo: X</button>
+        <button id="scopeResetViewBtn">Restablecer vista</button>
+        <span class="scope-hint" style="margin:0;">(la rueda del mouse y el arrastre del gráfico afectan al eje activo)</span>
+      </div>
+      <div class="scope-toolbar scope-scale-row">
+        <span class="scope-status scope-scale-tag">Escala X</span>
+        <input type="range" id="scopeXScaleSlider" min="-6" max="6" step="0.001" value="0" class="scope-slider">
+        <span class="scope-status scope-scale-value" id="scopeXScaleLabel">x1</span>
+      </div>
+      <div class="scope-toolbar scope-scale-row">
+        <span class="scope-status scope-scale-tag">Escala Y</span>
+        <input type="range" id="scopeYScaleSlider" min="-6" max="6" step="0.001" value="0" class="scope-slider">
+        <span class="scope-status scope-scale-value" id="scopeYScaleLabel">x1</span>
+      </div>
+      <div class="scope-layout" id="scopeLayout">
+        <div class="scope-channels" id="scopeChannels"><b>Canales</b></div>
+        <div class="scope-canvas-wrap">
+          <canvas id="liveScopeCanvas" width="900" height="380"></canvas>
+          <p class="scope-hint">Rueda del mouse / arrastrar: zoom y desplazamiento del eje activo (X o Y, elegido arriba) · Sliders: ajuste fino de la escala de cada eje (rango x0,000001 a x1.000.000) · El gráfico es 100% local, sobre los datos ya extraídos — no vuelve a consultar al ESP32.</p>
+        </div>
+        <div class="scope-readout" id="scopeReadout">Sin datos aún.</div>
+      </div>
+    </div>
+
+    <p class="scope-hint">
+      <b>Modo Red</b> requiere que el ESP32 tenga <code>WIFI_SSID</code>/<code>WIFI_PASSWORD</code> configurados en <code>src/main.cpp</code>
+      y esté conectado a la misma red WiFi que esta PC (ver la IP impresa por Serial al bootear, una sola vez, o en tu router).
+      Una vez conectado por WiFi ya no se necesita el cable USB.
+      <b>Modo USB</b> requiere Chrome/Edge de escritorio (Web Serial API) y el puerto serie libre (sin <code>pio device monitor</code> abierto) — el puerto se abre al apretar "Extraer datos" y se libera automáticamente al apretar "Detener extracción".
+    </p>
+  </section>
+
+  <p class="updated" id="updatedNote"></p>
+</main>
+
+<script src="data.embed.js"></script>
+<script>
+let DATA = null;
+
+function init(data) {
+  document.getElementById('updatedNote').textContent = `Proyecto: ${data.proyecto} · Última actualización de datos: ${data.actualizado}`;
+
+  // tabs
+  document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+      btn.classList.add('active');
+      document.getElementById(btn.dataset.tab).classList.add('active');
+    });
+  });
+
+  // symptom chips
+  const chipsEl = document.getElementById('symptomChips');
+  data.sintomas.forEach(s => {
+    const chip = document.createElement('button');
+    chip.className = 'symptom-chip';
+    chip.textContent = s.nombre;
+    chip.addEventListener('click', () => {
+      document.getElementById('search').value = s.nombre;
+      renderResults(s.nombre);
+    });
+    chipsEl.appendChild(chip);
+  });
+
+  document.getElementById('search').addEventListener('input', e => renderResults(e.target.value));
+  renderResults('');
+
+  // hardware table
+  const hwBody = document.getElementById('hwTable');
+  data.bloquesHardware.forEach(b => {
+    hwBody.innerHTML += `<tr><td><b>${b.nombre}</b></td><td>${b.funcion}</td><td>${b.componentes}</td><td>${b.senal}</td><td>${b.pines.map(p=>`<code>${p}</code>`).join(' ')}</td></tr>`;
+  });
+
+  // firmware table
+  const fwBody = document.getElementById('fwTable');
+  data.modulosFirmware.forEach(m => {
+    fwBody.innerHTML += `<tr><td><code>${m.nombre}</code></td><td>${m.archivo}:${m.linea}</td><td>${m.responsabilidad}</td><td>${m.perifericos.map(p=>`<code>${p}</code>`).join(' ') || '—'}</td></tr>`;
+  });
+
+  try {
+    renderSchematic(data);
+  } catch (err) {
+    console.error('Error al dibujar el esquemático:', err);
+    const wrap = document.getElementById('schematicWrap');
+    if (wrap) wrap.innerHTML = `<p class="empty">Error al dibujar el esquemático: ${escapeXml(err.message)}. El resto de la herramienta sigue funcionando.</p>`;
+  }
+
+  try {
+    initLiveScope(data);
+  } catch (err) {
+    console.error('Error al inicializar el osciloscopio en vivo:', err);
+    const statusEl = document.getElementById('scopeStatus');
+    if (statusEl) statusEl.textContent = 'Error al inicializar: ' + err.message;
+  }
+}
+
+function renderResults(query) {
+  const q = query.trim().toLowerCase();
+  const resultsEl = document.getElementById('results');
+  resultsEl.innerHTML = '';
+  if (!DATA) return;
+
+  const matches = q === '' ? DATA.sintomas : DATA.sintomas.filter(s =>
+    s.nombre.toLowerCase().includes(q) || s.causas.some(c => c.toLowerCase().includes(q))
+  );
+
+  if (matches.length === 0) {
+    resultsEl.innerHTML = '<p class="empty">Sin coincidencias. Prueba otra palabra o agrega este síntoma a data.json.</p>';
+    return;
+  }
+
+  matches.forEach(s => {
+    const hwBlocks = s.hardware.map(id => DATA.bloquesHardware.find(b => b.id === id)).filter(Boolean);
+    const fwBlocks = s.firmware.map(id => DATA.modulosFirmware.find(f => f.id === id)).filter(Boolean);
+
+    const card = document.createElement('div');
+    card.className = 'result-card';
+    card.innerHTML = `
+      <h3>${s.nombre}</h3>
+      <p><b>Causas probables (orden de probabilidad):</b></p>
+      <ul>${s.causas.map(c => `<li>${c}</li>`).join('')}</ul>
+      <div class="tag-row">
+        ${hwBlocks.map(b => `<span class="tag hw">HW: ${b.nombre}</span>`).join('')}
+        ${fwBlocks.map(f => `<span class="tag fw">FW: ${f.nombre} (${f.archivo}:${f.linea})</span>`).join('')}
+        ${(hwBlocks.length===0 && fwBlocks.length===0) ? '<span class="tag">Sin bloque asociado</span>' : ''}
+      </div>
+    `;
+    resultsEl.appendChild(card);
+  });
+}
+
+// ==================================================================
+// Esquemático (diagrama pin-a-pin a partir de posicion/pinesEsquema/conexiones)
+// ==================================================================
+const SCH_CATEGORY_COLORS = {
+  power: '#e0708f',
+  i2s: '#5fb3ff',
+  i2c: '#7fe0a8',
+  mux: '#e0b070',
+  buttons: '#c9a0ff',
+  audio: '#ffffff'
+};
+const SCH_CATEGORY_LABELS = {
+  power: 'Alimentación',
+  i2s: 'I2S (audio digital)',
+  i2c: 'I2C (OLED)',
+  mux: 'MUX / ADC (potenciómetros)',
+  buttons: 'Botones',
+  audio: 'Audio analógico'
+};
+const SCH_PIN_STUB = 22;
+const SCH_PIN_ROW = 13;
+
+function renderSchematic(data) {
+  const wrap = document.getElementById('schematicWrap');
+  const legendEl = document.getElementById('schLegend');
+  const blocks = (data.bloquesHardware || []).filter(b => b.posicion);
+  if (blocks.length === 0) {
+    wrap.innerHTML = '<p class="empty">No hay bloques con posición definida en data.json (campo "posicion").</p>';
+    return;
+  }
+
+  const byId = {};
+  blocks.forEach(b => byId[b.id] = b);
+
+  // Agrupa pines por lado para poder distribuirlos a lo largo del borde.
+  function pinsBySide(block) {
+    const sides = { left: [], right: [], top: [], bottom: [] };
+    (block.pinesEsquema || []).forEach(p => {
+      if (sides[p.lado]) sides[p.lado].push(p);
+    });
+    return sides;
+  }
+
+  const pinPointCache = {}; // `${blockId}.${pinId}` -> {x, y, stubX, stubY, lado}
+
+  blocks.forEach(b => {
+    const sides = pinsBySide(b);
+    const { x, y, w, h } = b.posicion;
+    ['left', 'right'].forEach(side => {
+      const list = sides[side];
+      list.forEach((pin, i) => {
+        const py = y + ((i + 1) * h) / (list.length + 1);
+        const px = side === 'left' ? x : x + w;
+        const stubX = side === 'left' ? px - SCH_PIN_STUB : px + SCH_PIN_STUB;
+        pinPointCache[`${b.id}.${pin.id}`] = { x: px, y: py, stubX, stubY: py, lado: side };
+      });
+    });
+    ['top', 'bottom'].forEach(side => {
+      const list = sides[side];
+      list.forEach((pin, i) => {
+        const px = x + ((i + 1) * w) / (list.length + 1);
+        const py = side === 'top' ? y : y + h;
+        const stubY = side === 'top' ? py - SCH_PIN_STUB : py + SCH_PIN_STUB;
+        pinPointCache[`${b.id}.${pin.id}`] = { x: px, y: py, stubX: px, stubY, lado: side };
+      });
+    });
+  });
+
+  let maxX = 40, maxY = 40;
+  blocks.forEach(b => {
+    maxX = Math.max(maxX, b.posicion.x + b.posicion.w + SCH_PIN_STUB + 40);
+    maxY = Math.max(maxY, b.posicion.y + b.posicion.h + SCH_PIN_STUB + 40);
+  });
+  const W = maxX, H = maxY;
+
+  let svg = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="width:100%; height:auto; min-width:900px;">`;
+
+  // cables (debajo de los bloques): de stub a stub, ruteo ortogonal de 3 segmentos
+  (data.conexiones || []).forEach((conn, idx) => {
+    const a = byId[conn.from], b = byId[conn.to];
+    if (!a || !b) return;
+    const pa = pinPointCache[`${conn.from}.${conn.fromPin}`];
+    const pb = pinPointCache[`${conn.to}.${conn.toPin}`];
+    if (!pa || !pb) return;
+
+    const color = SCH_CATEGORY_COLORS[conn.categoria] || '#4a5568';
+    let path;
+    const horizA = (pa.lado === 'left' || pa.lado === 'right');
+    const horizB = (pb.lado === 'left' || pb.lado === 'right');
+
+    if (horizA && horizB) {
+      const midX = (pa.stubX + pb.stubX) / 2;
+      path = `M${pa.x},${pa.y} L${pa.stubX},${pa.y} L${midX},${pa.y} L${midX},${pb.y} L${pb.stubX},${pb.y} L${pb.x},${pb.y}`;
+    } else if (!horizA && !horizB) {
+      const midY = (pa.stubY + pb.stubY) / 2;
+      path = `M${pa.x},${pa.y} L${pa.x},${pa.stubY} L${pa.x},${midY} L${pb.x},${midY} L${pb.x},${pb.stubY} L${pb.x},${pb.y}`;
+    } else {
+      // mixto: une vía el stub de cada uno con una esquina
+      path = `M${pa.x},${pa.y} L${pa.stubX},${pa.stubY} L${pb.stubX},${pb.stubY} L${pb.x},${pb.y}`;
+    }
+
+    svg += `<path class="sch-wire" data-wire="${idx}" d="${path}" stroke="${color}" />`;
+    svg += `<circle cx="${pa.x}" cy="${pa.y}" r="2" fill="${color}" />`;
+    svg += `<circle cx="${pb.x}" cy="${pb.y}" r="2" fill="${color}" />`;
+  });
+
+  // bloques + pines
+  blocks.forEach(b => {
+    const { x, y, w, h } = b.posicion;
+    svg += `<g class="sch-block" data-id="${b.id}">`;
+    svg += `<rect x="${x}" y="${y}" width="${w}" height="${h}" />`;
+    svg += `<text class="sch-title" x="${x + w / 2}" y="${y + 18}" text-anchor="middle">${escapeXml(b.nombre)}</text>`;
+    svg += `</g>`;
+
+    (b.pinesEsquema || []).forEach(pin => {
+      const p = pinPointCache[`${b.id}.${pin.id}`];
+      if (!p) return;
+      svg += `<line x1="${p.x}" y1="${p.y}" x2="${p.stubX}" y2="${p.stubY}" stroke="#5a6275" stroke-width="1.3" />`;
+      if (p.lado === 'left') {
+        svg += `<text class="sch-pin" x="${p.stubX - 4}" y="${p.y + 3}" text-anchor="end">${escapeXml(pin.texto)}</text>`;
+      } else if (p.lado === 'right') {
+        svg += `<text class="sch-pin" x="${p.stubX + 4}" y="${p.y + 3}" text-anchor="start">${escapeXml(pin.texto)}</text>`;
+      } else if (p.lado === 'top') {
+        svg += `<text class="sch-pin" x="${p.x}" y="${p.stubY - 4}" text-anchor="middle" transform="rotate(-90 ${p.x} ${p.stubY - 4})">${escapeXml(pin.texto)}</text>`;
+      } else {
+        svg += `<text class="sch-pin" x="${p.x}" y="${p.stubY + 4}" text-anchor="start" transform="rotate(-90 ${p.x} ${p.stubY + 4})">${escapeXml(pin.texto)}</text>`;
+      }
+    });
+  });
+
+  svg += `</svg>`;
+  wrap.innerHTML = svg;
+
+  // leyenda de colores por categoría
+  const usedCats = [...new Set((data.conexiones || []).map(c => c.categoria).filter(Boolean))];
+  legendEl.innerHTML = usedCats.map(cat =>
+    `<span style="color:${SCH_CATEGORY_COLORS[cat] || '#4a5568'}; margin-right:1rem;">● ${escapeXml(SCH_CATEGORY_LABELS[cat] || cat)}</span>`
+  ).join('');
+
+  const tooltip = document.createElement('div');
+  tooltip.className = 'sch-tooltip';
+  wrap.style.position = 'relative';
+  wrap.appendChild(tooltip);
+
+  function showTooltip(evt, html) {
+    tooltip.style.display = 'block';
+    const rect = wrap.getBoundingClientRect();
+    tooltip.style.left = (evt.clientX - rect.left + 14) + 'px';
+    tooltip.style.top = (evt.clientY - rect.top + 14) + 'px';
+    tooltip.innerHTML = html;
+  }
+  function hideTooltip() { tooltip.style.display = 'none'; }
+
+  wrap.querySelectorAll('.sch-block').forEach(g => {
+    const b = byId[g.dataset.id];
+    g.addEventListener('mousemove', evt => showTooltip(evt,
+      `<b>${escapeXml(b.nombre)}</b><br>${escapeXml(b.funcion)}<br><i>${escapeXml(b.componentes)}</i><br>Señal: ${escapeXml(b.senal)}`));
+    g.addEventListener('mouseleave', hideTooltip);
+  });
+
+  wrap.querySelectorAll('[data-wire]').forEach(wireEl => {
+    const conn = (data.conexiones || [])[parseInt(wireEl.dataset.wire, 10)];
+    if (!conn) return;
+    wireEl.addEventListener('mousemove', evt => showTooltip(evt,
+      `<b>${escapeXml(conn.label || '')}</b><br>${escapeXml(byId[conn.from]?.nombre || conn.from)} → ${escapeXml(byId[conn.to]?.nombre || conn.to)}<br>Categoría: ${escapeXml(SCH_CATEGORY_LABELS[conn.categoria] || conn.categoria || '—')}`));
+    wireEl.addEventListener('mouseleave', hideTooltip);
+  });
+}
+
+function escapeXml(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+// ==================================================================
+// Osciloscopio en vivo (Web Serial API)
+// ==================================================================
+const SCOPE_MAGIC = [0x53, 0x43, 0x50, 0x31]; // "SCP1"
+const SCOPE_COLORS = ['#5fb3ff', '#7fe0a8', '#e0b070', '#e07090', '#c9a0ff'];
+
+function initLiveScope(data) {
+  const extractBtn = document.getElementById('scopeExtractBtn');
+  const stopExtractBtn = document.getElementById('scopeStopExtractBtn');
+  const extractStatusEl = document.getElementById('scopeExtractStatus');
+  const downloadCsvBtn = document.getElementById('scopeDownloadCsvBtn');
+  const plotBtn = document.getElementById('scopePlotBtn');
+  const clearDataBtn = document.getElementById('scopeClearDataBtn');
+  const resetViewBtn = document.getElementById('scopeResetViewBtn');
+  const unsupportedEl = document.getElementById('scopeUnsupported');
+  const plotWrap = document.getElementById('scopePlotWrap');
+  const channelsEl = document.getElementById('scopeChannels');
+  const canvas = document.getElementById('liveScopeCanvas');
+  const ctx = canvas.getContext('2d');
+  const readoutEl = document.getElementById('scopeReadout');
+  const modeUsbRadio = document.getElementById('scopeModeUsb');
+  const modeWifiRadio = document.getElementById('scopeModeWifi');
+  const wifiIpInput = document.getElementById('scopeWifiIp');
+  const axisToggleBtn = document.getElementById('scopeAxisToggle');
+  const xScaleSlider = document.getElementById('scopeXScaleSlider');
+  const xScaleLabel = document.getElementById('scopeXScaleLabel');
+  const yScaleSlider = document.getElementById('scopeYScaleSlider');
+  const yScaleLabel = document.getElementById('scopeYScaleLabel');
+
+  const usbSupported = ('serial' in navigator);
+  if (!usbSupported) {
+    modeUsbRadio.disabled = true;
+    modeWifiRadio.checked = true;
+    wifiIpInput.disabled = false;
+    unsupportedEl.style.display = 'block';
+    unsupportedEl.textContent = 'Este navegador no soporta Web Serial API (modo USB deshabilitado). Usa el modo Red (WiFi) o Chrome/Edge de escritorio para USB.';
+  }
+
+  function currentMode() {
+    return modeWifiRadio.checked ? 'wifi' : 'usb';
+  }
+
+  [modeUsbRadio, modeWifiRadio].forEach(radio => {
+    radio.addEventListener('change', () => {
+      wifiIpInput.disabled = (currentMode() !== 'wifi');
+    });
+  });
+
+  // ---------------- Transporte: parseo del frame binario SCP1 (USB o WiFi) ----------------
+  let port = null;
+  let reader = null;
+  let writer = null;
+  let rxBuffer = new Uint8Array(0);
+  let activeMode = 'usb';
+  let wifiIp = '';
+
+  function appendBytes(chunk) {
+    const merged = new Uint8Array(rxBuffer.length + chunk.length);
+    merged.set(rxBuffer, 0);
+    merged.set(chunk, rxBuffer.length);
+    rxBuffer = merged;
+  }
+
+  function findMagic(buf) {
+    for (let i = 0; i <= buf.length - 4; i++) {
+      if (buf[i] === SCOPE_MAGIC[0] && buf[i+1] === SCOPE_MAGIC[1] && buf[i+2] === SCOPE_MAGIC[2] && buf[i+3] === SCOPE_MAGIC[3]) {
+        return i;
+      }
+    }
+    return -1;
+  }
+
+  function tryParseFrame(buf) {
+    const magicIdx = findMagic(buf);
+    if (magicIdx < 0) return null;
+    let off = magicIdx + 4;
+    if (buf.length < off + 8) return null;
+    const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+
+    const sampleRate = dv.getUint32(off, true); off += 4;
+    const numChannels = dv.getUint16(off, true); off += 2;
+    const numPoints = dv.getUint16(off, true); off += 2;
+
+    if (numChannels > 16 || numPoints > 8192) return { error: 'Frame corrupto (cabecera fuera de rango)', resyncFrom: magicIdx + 4 };
+
+    const namesLen = numChannels * 16;
+    if (buf.length < off + namesLen) return null;
+    const names = [];
+    for (let i = 0; i < numChannels; i++) {
+      let s = '';
+      for (let j = 0; j < 16; j++) {
+        const c = buf[off + j];
+        if (c === 0) break;
+        s += String.fromCharCode(c);
+      }
+      names.push(s);
+      off += 16;
+    }
+
+    const dataLen = numChannels * numPoints * 2;
+    if (buf.length < off + dataLen) return null;
+    const channels = [];
+    for (let c = 0; c < numChannels; c++) {
+      const arr = new Float32Array(numPoints);
+      for (let i = 0; i < numPoints; i++) {
+        arr[i] = dv.getInt16(off, true) / 32767;
+        off += 2;
+      }
+      channels.push(arr);
+    }
+
+    if (buf.length < off + 2) return null;
+    const numPots = dv.getUint16(off, true); off += 2;
+    if (buf.length < off + numPots * 4) return null;
+    const pots = [];
+    for (let i = 0; i < numPots; i++) { pots.push(dv.getFloat32(off, true)); off += 4; }
+
+    if (buf.length < off + 1) return null;
+    const numLfos = dv.getUint8(off); off += 1;
+    if (buf.length < off + numLfos * 10) return null;
+    const lfos = [];
+    for (let i = 0; i < numLfos; i++) {
+      const enabled = dv.getUint8(off); off += 1;
+      const shape = dv.getUint8(off); off += 1;
+      const rateHz = dv.getFloat32(off, true); off += 4;
+      const depth = dv.getFloat32(off, true); off += 4;
+      lfos.push({ enabled: !!enabled, shape, rateHz, depth });
+    }
+
+    return {
+      frame: { sampleRate, numChannels, numPoints, names, channels, pots, lfos },
+      consumed: off
+    };
+  }
+
+  async function readUntilFrame() {
+    while (true) {
+      const parsed = tryParseFrame(rxBuffer);
+      if (parsed) {
+        if (parsed.error) {
+          rxBuffer = rxBuffer.slice(parsed.resyncFrom);
+          continue;
+        }
+        rxBuffer = rxBuffer.slice(parsed.consumed);
+        return parsed.frame;
+      }
+      const { value, done } = await reader.read();
+      if (done) return null;
+      if (value) appendBytes(value);
+    }
+  }
+
+  async function connectUsb() {
+    try {
+      port = await navigator.serial.requestPort();
+      await port.open({ baudRate: 921600 });
+    } catch (err) {
+      extractStatusEl.textContent = 'Conexión cancelada o falló: ' + err.message;
+      return false;
+    }
+    reader = port.readable.getReader();
+    writer = port.writable.getWriter();
+    rxBuffer = new Uint8Array(0);
+    return true;
+  }
+
+  async function disconnectUsb() {
+    try { if (reader) { await reader.cancel(); reader.releaseLock(); } } catch (e) {}
+    try { if (writer) { writer.releaseLock(); } } catch (e) {}
+    try { if (port) { await port.close(); } } catch (e) {}
+    port = null; reader = null; writer = null;
+  }
+
+  async function requestSingleFrameUsb() {
+    await writer.write(new TextEncoder().encode('D'));
+    return await readUntilFrame();
+  }
+
+  async function requestSingleFrameWifi() {
+    const resp = await fetch(`http://${wifiIp}/scope`, { cache: 'no-store' });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const buf = new Uint8Array(await resp.arrayBuffer());
+    const parsed = tryParseFrame(buf);
+    if (!parsed || parsed.error) throw new Error('Respuesta del ESP32 incompleta o corrupta');
+    return parsed.frame;
+  }
+
+  // ---------------- Extracción: acumula capturas entre "Extraer datos" y "Detener extracción" ----------------
+  // A propósito NO se dibuja nada en el canvas mientras se extrae -- la idea es que el ESP32 solo reciba
+  // tráfico de red durante esta ventana explícita, y que mostrar el gráfico (que no necesita al ESP32 para
+  // nada, todo es local) sea un paso separado y posterior, para no sumarle carga al sintetizador mientras
+  // está sonando.
+  let extracting = false;
+  let extractedFrames = [];
+  let extractionStartMs = 0;
+
+  const LFO_NAMES = ['Pitch', 'Volume', 'Filter', 'Reverb', 'Delay'];
+
+  async function startExtraction() {
+    const mode = currentMode();
+    if (mode === 'usb') {
+      if (!usbSupported) {
+        extractStatusEl.textContent = 'Web Serial no soportado en este navegador. Usa el modo Red.';
+        return;
+      }
+      const ok = await connectUsb();
+      if (!ok) return;
+    } else {
+      wifiIp = wifiIpInput.value.trim();
+      if (!wifiIp) {
+        extractStatusEl.textContent = 'Ingresa la IP del ESP32 (ver pantalla OLED, página WiFi).';
+        return;
+      }
+    }
+
+    activeMode = mode;
+    extractedFrames = [];
+    extractionStartMs = performance.now();
+    extracting = true;
+
+    extractBtn.disabled = true;
+    stopExtractBtn.disabled = false;
+    downloadCsvBtn.disabled = true;
+    plotBtn.disabled = true;
+    clearDataBtn.disabled = true;
+    modeUsbRadio.disabled = true;
+    modeWifiRadio.disabled = true;
+    wifiIpInput.disabled = true;
+    extractStatusEl.textContent = 'Extrayendo...';
+    extractStatusEl.classList.add('live');
+
+    extractionLoop();
+  }
+
+  async function extractionLoop() {
+    while (extracting) {
+      try {
+        const frame = (activeMode === 'wifi') ? await requestSingleFrameWifi() : await requestSingleFrameUsb();
+        if (!frame) break;
+        const captureMs = performance.now();
+        extractedFrames.push(Object.assign({}, frame, { captureMs }));
+        const totalSamples = extractedFrames.reduce((s, f) => s + f.numPoints, 0);
+        const elapsedS = ((captureMs - extractionStartMs) / 1000).toFixed(1);
+        extractStatusEl.textContent = `Extrayendo... ${extractedFrames.length} capturas, ${totalSamples} muestras, ${elapsedS}s transcurridos`;
+      } catch (err) {
+        if (extracting) {
+          extractStatusEl.textContent = 'Error durante la extracción: ' + err.message + ' — reintentando...';
+        }
+        await new Promise(r => setTimeout(r, 500));
+      }
+    }
+  }
+
+  async function stopExtraction() {
+    extracting = false;
+    if (activeMode === 'usb') {
+      await disconnectUsb();
+    }
+    extractBtn.disabled = false;
+    stopExtractBtn.disabled = true;
+    modeUsbRadio.disabled = !usbSupported;
+    modeWifiRadio.disabled = false;
+    wifiIpInput.disabled = (currentMode() !== 'wifi');
+    extractStatusEl.classList.remove('live');
+
+    const hasData = extractedFrames.length > 0;
+    downloadCsvBtn.disabled = !hasData;
+    plotBtn.disabled = !hasData;
+    clearDataBtn.disabled = !hasData;
+    if (hasData) {
+      const totalSamples = extractedFrames.reduce((s, f) => s + f.numPoints, 0);
+      extractStatusEl.textContent = `Extracción detenida: ${extractedFrames.length} capturas, ${totalSamples} muestras listas para descargar/graficar.`;
+    } else {
+      extractStatusEl.textContent = 'Extracción detenida sin datos.';
+    }
+  }
+
+  function clearExtractedData() {
+    extractedFrames = [];
+    plotData = null;
+    downloadCsvBtn.disabled = true;
+    plotBtn.disabled = true;
+    clearDataBtn.disabled = true;
+    plotWrap.style.display = 'none';
+    extractStatusEl.textContent = 'Datos extraídos borrados. Sin extracción en curso.';
+  }
+
+  // ---------------- CSV ----------------
+  function buildCsv() {
+    if (extractedFrames.length === 0) return '';
+    const first = extractedFrames[0];
+    const dtMs = 1000 / first.sampleRate;
+    const dyPerDiv = 0.5; // 2 unidades (-1..1) / 4 divisiones de grilla, referencia sin zoom aplicado
+    const header = [
+      'frame', 'sample_index', 't_ms', 'dt_ms', 'dy_per_div',
+      ...first.names.map(n => 'ch_' + n.replace(/[^a-zA-Z0-9]+/g, '_')),
+      ...first.pots.map((_, i) => 'pot_I' + i),
+      ...LFO_NAMES.flatMap(n => [n + '_enabled', n + '_shape', n + '_rateHz', n + '_depth'])
+    ];
+    const lines = [header.join(',')];
+    extractedFrames.forEach((f, fi) => {
+      const baseMs = f.captureMs - extractionStartMs;
+      for (let i = 0; i < f.numPoints; i++) {
+        const row = [
+          fi, i, (baseMs + i * dtMs).toFixed(3), dtMs.toFixed(6), dyPerDiv,
+          ...f.channels.map(arr => arr[i].toFixed(6)),
+          ...f.pots.map(v => v.toFixed(4)),
+          ...f.lfos.flatMap(l => [l.enabled ? 1 : 0, l.shape, l.rateHz.toFixed(4), l.depth.toFixed(4)])
+        ];
+        lines.push(row.join(','));
+      }
+    });
+    return lines.join('\n');
+  }
+
+  function downloadCsv() {
+    const csv = buildCsv();
+    if (!csv) return;
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    a.href = url;
+    a.download = `synth_osciloscopio_${stamp}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
+  // ---------------- Graficar (100% local, sobre los datos ya extraídos) ----------------
+  let plotData = null; // { sampleRate, dtMs, channelNames, times, channels, durationMs }
+  let channelVisible = [true, true, true, true, true];
+  let viewStartMs = 0;
+  let viewSpanMs = 1;
+  let xZoom = 1;
+  let yZoom = 1;
+  let yPan = 0;
+  let activeAxis = 'x';
+
+  const SCALE_MIN = 0.000001;
+  const SCALE_MAX = 1000000;
+
+  function formatScale(value) {
+    if (value >= 100000 || value <= 0.00001) return 'x' + value.toExponential(2);
+    if (value >= 1) return 'x' + value.toFixed(value >= 1000 ? 0 : value >= 10 ? 1 : 2);
+    return 'x' + value.toFixed(6).replace(/0+$/, '').replace(/\.$/, '.0');
+  }
+
+  function setAxisToggleLabel() {
+    axisToggleBtn.textContent = 'Eje activo: ' + (activeAxis === 'x' ? 'X' : 'Y');
+  }
+
+  function lowerBound(arr, target) {
+    let lo = 0, hi = arr.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (arr[mid] < target) lo = mid + 1; else hi = mid;
+    }
+    return lo;
+  }
+
+  function buildPlotDataset() {
+    if (extractedFrames.length === 0) return null;
+    const names = extractedFrames[0].names;
+    const sampleRate = extractedFrames[0].sampleRate;
+    const dtMs = 1000 / sampleRate;
+    let total = 0;
+    extractedFrames.forEach(f => total += f.numPoints);
+    const times = new Float64Array(total);
+    const channels = names.map(() => new Float32Array(total));
+    let idx = 0;
+    extractedFrames.forEach(f => {
+      const baseMs = f.captureMs - extractionStartMs;
+      for (let i = 0; i < f.numPoints; i++) {
+        times[idx] = baseMs + i * dtMs;
+        for (let c = 0; c < names.length; c++) channels[c][idx] = f.channels[c][i];
+        idx++;
+      }
+    });
+    return {
+      sampleRate, dtMs, channelNames: names, times, channels,
+      durationMs: total > 1 ? (times[total - 1] - times[0]) : dtMs
+    };
+  }
+
+  function renderChannelToggles(names) {
+    channelsEl.innerHTML = '<b>Canales</b>';
+    names.forEach((name, i) => {
+      const id = 'liveCh' + i;
+      const label = document.createElement('label');
+      label.innerHTML = `<input type="checkbox" id="${id}" ${channelVisible[i] !== false ? 'checked' : ''}>
+        <span style="color:${SCOPE_COLORS[i % SCOPE_COLORS.length]}">●</span> ${escapeXml(name)}`;
+      label.querySelector('input').addEventListener('change', e => {
+        channelVisible[i] = e.target.checked;
+        drawPlot();
+      });
+      channelsEl.appendChild(label);
+    });
+  }
+
+  function updateReadoutFromLastFrame() {
+    if (extractedFrames.length === 0) { readoutEl.textContent = 'Sin datos aún.'; return; }
+    const f = extractedFrames[extractedFrames.length - 1];
+    const lines = [];
+    lines.push('Último estado de controles');
+    lines.push('capturado (fin extracción):');
+    lines.push(`SR: ${f.sampleRate} Hz`);
+    lines.push('');
+    lines.push('Pots:');
+    f.pots.forEach((v, i) => lines.push(` I${i}: ${v.toFixed(2)}`));
+    lines.push('');
+    f.lfos.forEach((l, i) => {
+      const nm = LFO_NAMES[i] || ('LFO' + i);
+      lines.push(`${nm.padEnd(7)} ${l.enabled ? 'ON ' : 'OFF'} r=${l.rateHz.toFixed(2)} d=${l.depth.toFixed(2)}`);
+    });
+    readoutEl.textContent = lines.join('\n');
+  }
+
+  function plotExtractedData() {
+    plotData = buildPlotDataset();
+    if (!plotData) return;
+    viewStartMs = 0;
+    viewSpanMs = plotData.durationMs || plotData.dtMs;
+    xZoom = 1; yZoom = 1; yPan = 0;
+    xScaleSlider.value = 0; yScaleSlider.value = 0;
+    xScaleLabel.textContent = 'x1';
+    yScaleLabel.textContent = 'x1';
+    renderChannelToggles(plotData.channelNames);
+    plotWrap.style.display = 'block';
+    drawPlot();
+    updateReadoutFromLastFrame();
+  }
+
+  function applyXZoom(newZoom, recenter) {
+    if (!plotData) return;
+    xZoom = Math.min(SCALE_MAX, Math.max(SCALE_MIN, newZoom));
+    const minSpan = Math.max(plotData.dtMs * 2, plotData.durationMs / SCALE_MAX);
+    const newSpan = Math.min(plotData.durationMs || plotData.dtMs, Math.max(minSpan, (plotData.durationMs || plotData.dtMs) / xZoom));
+    if (recenter) {
+      const center = viewStartMs + viewSpanMs / 2;
+      viewStartMs = Math.min((plotData.durationMs || 0) - newSpan, Math.max(0, center - newSpan / 2));
+    } else {
+      viewStartMs = Math.min((plotData.durationMs || 0) - newSpan, Math.max(0, viewStartMs));
+    }
+    viewSpanMs = newSpan;
+    xScaleSlider.value = Math.log10(xZoom);
+    xScaleLabel.textContent = formatScale(xZoom);
+    drawPlot();
+  }
+
+  function applyYZoom(newZoom) {
+    yZoom = Math.min(SCALE_MAX, Math.max(SCALE_MIN, newZoom));
+    yScaleSlider.value = Math.log10(yZoom);
+    yScaleLabel.textContent = formatScale(yZoom);
+    drawPlot();
+  }
+
+  xScaleSlider.addEventListener('input', () => {
+    applyXZoom(Math.pow(10, parseFloat(xScaleSlider.value)), false);
+  });
+  yScaleSlider.addEventListener('input', () => {
+    applyYZoom(Math.pow(10, parseFloat(yScaleSlider.value)));
+  });
+
+  axisToggleBtn.addEventListener('click', () => {
+    activeAxis = (activeAxis === 'x') ? 'y' : 'x';
+    setAxisToggleLabel();
+  });
+  setAxisToggleLabel();
+
+  function drawPlot() {
+    if (!plotData) return;
+    const dpr = window.devicePixelRatio || 1;
+    const cssW = canvas.clientWidth || 900;
+    const cssH = canvas.clientHeight || 380;
+    if (canvas.width !== cssW * dpr || canvas.height !== cssH * dpr) {
+      canvas.width = cssW * dpr;
+      canvas.height = cssH * dpr;
+    }
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, cssW, cssH);
+    ctx.fillStyle = '#0a0c10';
+    ctx.fillRect(0, 0, cssW, cssH);
+
+    const GX = 10, GY = 4;
+    const marginL = 64, marginR = 10, marginT = 10, marginB = 26;
+    const plotW = cssW - marginL - marginR;
+    const plotH = cssH - marginT - marginB;
+    const zeroY = marginT + plotH / 2;
+
+    const visStart = viewStartMs;
+    const visEnd = viewStartMs + viewSpanMs;
+    const startIdx = Math.max(0, lowerBound(plotData.times, visStart) - 1);
+    const endIdx = Math.min(plotData.times.length, lowerBound(plotData.times, visEnd) + 1);
+    const gapThresholdMs = plotData.dtMs * 4;
+
+    ctx.strokeStyle = '#1c212c';
+    ctx.lineWidth = 1;
+    for (let gx = 0; gx <= GX; gx++) {
+      const x = marginL + (plotW * gx) / GX;
+      ctx.beginPath(); ctx.moveTo(x, marginT); ctx.lineTo(x, marginT + plotH); ctx.stroke();
+    }
+    for (let gy = 0; gy <= GY; gy++) {
+      const y = marginT + (plotH * gy) / GY;
+      ctx.beginPath(); ctx.moveTo(marginL, y); ctx.lineTo(marginL + plotW, y); ctx.stroke();
+    }
+    ctx.strokeStyle = '#33394a';
+    ctx.beginPath(); ctx.moveTo(marginL, zeroY); ctx.lineTo(marginL + plotW, zeroY); ctx.stroke();
+
+    plotData.channels.forEach((arr, ch) => {
+      if (channelVisible[ch] === false) return;
+      ctx.strokeStyle = SCOPE_COLORS[ch % SCOPE_COLORS.length];
+      ctx.lineWidth = 1.3;
+      ctx.beginPath();
+      let started = false;
+      let prevT = null;
+      for (let i = startIdx; i < endIdx; i++) {
+        const t = plotData.times[i];
+        if (t < visStart || t > visEnd) continue;
+        const px = marginL + ((t - visStart) / (visEnd - visStart || 1)) * plotW;
+        const scaled = arr[i] * yZoom + yPan;
+        const py = zeroY - scaled * (plotH / 2) * 0.95;
+        const gap = (prevT !== null) && (t - prevT > gapThresholdMs);
+        if (!started || gap) { ctx.moveTo(px, py); started = true; } else { ctx.lineTo(px, py); }
+        prevT = t;
+      }
+      ctx.stroke();
+    });
+
+    ctx.fillStyle = '#9aa3af';
+    ctx.font = '10px Consolas, monospace';
+    ctx.textAlign = 'right';
+    for (let gy = 0; gy <= GY; gy++) {
+      const fracFromTop = gy / GY;
+      const scaledAtLine = 1 - 2 * fracFromTop;
+      const amplitude = (scaledAtLine - yPan) / (yZoom || 1);
+      const y = marginT + (plotH * gy) / GY;
+      ctx.fillText(amplitude.toFixed(3), marginL - 6, y + 3);
+    }
+    ctx.textAlign = 'left';
+
+    ctx.textAlign = 'center';
+    for (let gx = 0; gx <= GX; gx++) {
+      const timeMs = visStart + (visEnd - visStart) * gx / GX;
+      const x = marginL + (plotW * gx) / GX;
+      ctx.fillText(timeMs.toFixed(1), x, marginT + plotH + 14);
+    }
+    ctx.textAlign = 'left';
+
+    const dtDivMs = (visEnd - visStart) / GX;
+    const dyDiv = 2 / (GY * (yZoom || 1));
+    ctx.fillStyle = '#5fb3ff';
+    ctx.fillText(`dt = ${dtDivMs.toFixed(3)} ms/div   dy = ${dyDiv.toFixed(4)}/div   ventana = ${(visEnd - visStart).toFixed(1)} ms`, marginL, cssH - 2);
+  }
+
+  // zoom (rueda) y pan (arrastrar): afectan al eje activo (X o Y), elegido con el botón "Eje activo".
+  let dragging = false, dragStartX = 0, dragStartY = 0, dragStartViewMs = 0, dragStartYPan = 0, dragAxis = 'x';
+
+  canvas.addEventListener('wheel', evt => {
+    if (!plotData) return;
+    evt.preventDefault();
+    const factor = evt.deltaY > 0 ? 1.15 : 1 / 1.15;
+    if (activeAxis === 'y') {
+      applyYZoom(yZoom * factor);
+    } else {
+      applyXZoom(xZoom * factor, true);
+    }
+  }, { passive: false });
+
+  canvas.addEventListener('mousedown', evt => {
+    if (!plotData) return;
+    dragging = true;
+    dragAxis = activeAxis;
+    dragStartX = evt.clientX;
+    dragStartY = evt.clientY;
+    dragStartViewMs = viewStartMs;
+    dragStartYPan = yPan;
+  });
+  window.addEventListener('mousemove', evt => {
+    if (!dragging || !plotData) return;
+    if (dragAxis === 'y') {
+      const dy = evt.clientY - dragStartY;
+      const deltaPan = dy / canvas.clientHeight * 2;
+      yPan = Math.max(-5, Math.min(5, dragStartYPan + deltaPan));
+    } else {
+      const dx = evt.clientX - dragStartX;
+      const deltaMs = -dx / canvas.clientWidth * viewSpanMs;
+      viewStartMs = Math.min((plotData.durationMs || 0) - viewSpanMs, Math.max(0, dragStartViewMs + deltaMs));
+    }
+    drawPlot();
+  });
+  window.addEventListener('mouseup', () => { dragging = false; });
+
+  resetViewBtn.addEventListener('click', () => {
+    viewStartMs = 0; yPan = 0;
+    applyXZoom(1, false);
+    applyYZoom(1);
+  });
+
+  extractBtn.addEventListener('click', startExtraction);
+  stopExtractBtn.addEventListener('click', stopExtraction);
+  downloadCsvBtn.addEventListener('click', downloadCsv);
+  plotBtn.addEventListener('click', plotExtractedData);
+  clearDataBtn.addEventListener('click', clearExtractedData);
+}
+
+// Los datos se cargan desde data.embed.js (variable global SYNTH_DIAG_DATA) en vez de fetch(),
+// porque al abrir este HTML con file:// los navegadores bloquean fetch() a archivos locales.
+// Este arranque va al FINAL del script (no al principio) a propósito: init() llama a
+// renderSchematic()/initLiveScope(), que usan const declaradas más abajo en este mismo
+// archivo — llamarlas antes de que esas líneas se ejecuten lanza un ReferenceError de
+// "temporal dead zone" y aborta toda la inicialización (incluyendo el osciloscopio en vivo).
+if (typeof SYNTH_DIAG_DATA !== 'undefined') {
+  DATA = SYNTH_DIAG_DATA;
+  init(DATA);
+} else {
+  document.getElementById('results').innerHTML = '<p class="empty">No se encontró data.embed.js. Ejecuta diagnostico/build.py para regenerarlo a partir de data.json.</p>';
+}
+</script>
+</body>
+</html>
