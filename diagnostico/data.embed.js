@@ -1,0 +1,831 @@
+// GENERADO AUTOMATICAMENTE desde data.json. No editar a mano: ejecutar build.py despues de editar data.json.
+const SYNTH_DIAG_DATA = {
+  "proyecto": "Synth (ESP32 + PCM5102A)",
+  "actualizado": "2026-06-21",
+  "notas": "Sintetizador 100% digital: toda la síntesis ocurre en firmware (src/main.cpp). No hay etapas analógicas VCO/VCF/VCA discretas. Editar este archivo a mano para mantener el diagnóstico sincronizado con el hardware/firmware real.",
+  "bloquesHardware": [
+    {
+      "id": "power",
+      "nombre": "Fuente de alimentación",
+      "funcion": "Boost converter a 5V + regulador lineal a 3.3V para toda la lógica",
+      "componentes": "Convertidor Boost + regulador lineal 3.3V",
+      "senal": "DC in -> 5V -> 3.3V",
+      "pines": [],
+      "posicion": {
+        "x": 40,
+        "y": 30,
+        "w": 220,
+        "h": 90
+      },
+      "pinesEsquema": [
+        {
+          "id": "p_3v3_logic",
+          "texto": "3V3 LOGICA",
+          "lado": "bottom"
+        },
+        {
+          "id": "p_3v3_analog",
+          "texto": "3V3 ANALOG",
+          "lado": "right"
+        }
+      ]
+    },
+    {
+      "id": "rc_filter",
+      "nombre": "Filtro RC (alim. analógica DAC)",
+      "funcion": "Filtra el riel 3.3V que alimenta el pin Analog del PCM5102A para reducir ruido digital",
+      "componentes": "Resistor + capacitor (valores no documentados)",
+      "senal": "3.3V regulado -> 3.3V filtrado",
+      "pines": [],
+      "posicion": {
+        "x": 470,
+        "y": 30,
+        "w": 220,
+        "h": 90
+      },
+      "pinesEsquema": [
+        {
+          "id": "rc_in",
+          "texto": "3V3 IN",
+          "lado": "left"
+        },
+        {
+          "id": "rc_out",
+          "texto": "3V3 OUT (filt.)",
+          "lado": "bottom"
+        }
+      ]
+    },
+    {
+      "id": "mux",
+      "nombre": "Potenciómetros (x12) + MUX CD4067",
+      "funcion": "Multiplexa 12 potenciómetros a un solo canal ADC",
+      "componentes": "CD4067 (mux analógico 16:1, 12 canales usados)",
+      "senal": "12 señales 0-3.3V -> 1 señal multiplexada",
+      "pines": [
+        "GPIO35 (SIG/ADC1)",
+        "GPIO16 (S0)",
+        "GPIO17 (S1)",
+        "GPIO19 (S2)",
+        "GPIO18 (S3)"
+      ],
+      "posicion": {
+        "x": 40,
+        "y": 175,
+        "w": 220,
+        "h": 150
+      },
+      "pinesEsquema": [
+        {
+          "id": "mux_sig",
+          "texto": "SIG",
+          "lado": "right"
+        },
+        {
+          "id": "mux_s0",
+          "texto": "S0",
+          "lado": "right"
+        },
+        {
+          "id": "mux_s1",
+          "texto": "S1",
+          "lado": "right"
+        },
+        {
+          "id": "mux_s2",
+          "texto": "S2",
+          "lado": "right"
+        },
+        {
+          "id": "mux_s3",
+          "texto": "S3",
+          "lado": "right"
+        }
+      ]
+    },
+    {
+      "id": "esp32",
+      "nombre": "ESP32 (MCU)",
+      "funcion": "Microcontrolador central: corre toda la síntesis digital (DSP), lee controles y maneja el display",
+      "componentes": "ESP32-DevKit (genérico)",
+      "senal": "Digital / I2S / I2C / ADC / GPIO",
+      "pines": [
+        "GPIO22/25/26 (I2S)",
+        "GPIO35,16,17,18,19 (MUX)",
+        "GPIO4,5,13,27,32,33 (botones)",
+        "GPIO21,23 (I2C)"
+      ],
+      "posicion": {
+        "x": 470,
+        "y": 155,
+        "w": 240,
+        "h": 480
+      },
+      "pinesEsquema": [
+        {
+          "id": "e_top_3v3",
+          "texto": "3V3 IN",
+          "lado": "top"
+        },
+        {
+          "id": "e_l_sig",
+          "texto": "GPIO35 (MUX SIG)",
+          "lado": "left"
+        },
+        {
+          "id": "e_l_s0",
+          "texto": "GPIO16 (MUX S0)",
+          "lado": "left"
+        },
+        {
+          "id": "e_l_s1",
+          "texto": "GPIO17 (MUX S1)",
+          "lado": "left"
+        },
+        {
+          "id": "e_l_s2",
+          "texto": "GPIO19 (MUX S2)",
+          "lado": "left"
+        },
+        {
+          "id": "e_l_s3",
+          "texto": "GPIO18 (MUX S3)",
+          "lado": "left"
+        },
+        {
+          "id": "e_l_rojo",
+          "texto": "GPIO27 (BTN ROJO)",
+          "lado": "left"
+        },
+        {
+          "id": "e_l_blanco",
+          "texto": "GPIO13 (BTN BLANCO)",
+          "lado": "left"
+        },
+        {
+          "id": "e_l_verde",
+          "texto": "GPIO4 (BTN VERDE)",
+          "lado": "left"
+        },
+        {
+          "id": "e_l_negro",
+          "texto": "GPIO5 (BTN NEGRO)",
+          "lado": "left"
+        },
+        {
+          "id": "e_l_axis",
+          "texto": "GPIO33 (SCOPE AXIS)",
+          "lado": "left"
+        },
+        {
+          "id": "e_l_scale",
+          "texto": "GPIO32 (SCOPE SCALE)",
+          "lado": "left"
+        },
+        {
+          "id": "e_r_bck",
+          "texto": "GPIO26 (I2S BCK)",
+          "lado": "right"
+        },
+        {
+          "id": "e_r_ws",
+          "texto": "GPIO25 (I2S WS)",
+          "lado": "right"
+        },
+        {
+          "id": "e_r_din",
+          "texto": "GPIO22 (I2S DIN)",
+          "lado": "right"
+        },
+        {
+          "id": "e_b_sda",
+          "texto": "GPIO21 (I2C SDA)",
+          "lado": "bottom"
+        },
+        {
+          "id": "e_b_scl",
+          "texto": "GPIO23 (I2C SCL)",
+          "lado": "bottom"
+        }
+      ]
+    },
+    {
+      "id": "buttons",
+      "nombre": "Botones (x6)",
+      "funcion": "Entradas digitales de control (INPUT_PULLUP, activo en bajo)",
+      "componentes": "Pulsadores momentáneos",
+      "senal": "Digital",
+      "pines": [
+        "GPIO27 (rojo)",
+        "GPIO13 (blanco)",
+        "GPIO4 (verde)",
+        "GPIO5 (negro)",
+        "GPIO32",
+        "GPIO33"
+      ],
+      "posicion": {
+        "x": 40,
+        "y": 355,
+        "w": 220,
+        "h": 180
+      },
+      "pinesEsquema": [
+        {
+          "id": "btn_rojo",
+          "texto": "ROJO",
+          "lado": "right"
+        },
+        {
+          "id": "btn_blanco",
+          "texto": "BLANCO",
+          "lado": "right"
+        },
+        {
+          "id": "btn_verde",
+          "texto": "VERDE",
+          "lado": "right"
+        },
+        {
+          "id": "btn_negro",
+          "texto": "NEGRO",
+          "lado": "right"
+        },
+        {
+          "id": "btn_axis",
+          "texto": "SCOPE AXIS",
+          "lado": "right"
+        },
+        {
+          "id": "btn_scale",
+          "texto": "SCOPE SCALE",
+          "lado": "right"
+        }
+      ]
+    },
+    {
+      "id": "dac",
+      "nombre": "DAC PCM5102A (módulo)",
+      "funcion": "Convierte I2S 16-bit/44.1kHz a audio analógico estéreo; filtro de salida interno propio",
+      "componentes": "Módulo breakout PCM5102A",
+      "senal": "I2S in -> salida de línea analógica estéreo",
+      "pines": [
+        "GPIO26 (BCK)",
+        "GPIO25 (WS/LRCK)",
+        "GPIO22 (DIN)"
+      ],
+      "posicion": {
+        "x": 830,
+        "y": 230,
+        "w": 210,
+        "h": 170
+      },
+      "pinesEsquema": [
+        {
+          "id": "d_top_3v3",
+          "texto": "3V3 ANALOG IN",
+          "lado": "top"
+        },
+        {
+          "id": "d_l_bck",
+          "texto": "BCK",
+          "lado": "left"
+        },
+        {
+          "id": "d_l_ws",
+          "texto": "WS",
+          "lado": "left"
+        },
+        {
+          "id": "d_l_din",
+          "texto": "DIN",
+          "lado": "left"
+        },
+        {
+          "id": "d_r_l",
+          "texto": "OUT L",
+          "lado": "right"
+        },
+        {
+          "id": "d_r_r",
+          "texto": "OUT R",
+          "lado": "right"
+        }
+      ]
+    },
+    {
+      "id": "salida_audio",
+      "nombre": "Salida de línea (jack)",
+      "funcion": "Punto donde el audio analógico sale de la placa hacia el amplificador/parlante",
+      "componentes": "Jack 3.5mm o pads de salida del módulo PCM5102A",
+      "senal": "Audio analógico estéreo",
+      "pines": [],
+      "posicion": {
+        "x": 1100,
+        "y": 250,
+        "w": 160,
+        "h": 130
+      },
+      "pinesEsquema": [
+        {
+          "id": "sal_l",
+          "texto": "L",
+          "lado": "left"
+        },
+        {
+          "id": "sal_r",
+          "texto": "R",
+          "lado": "left"
+        }
+      ]
+    },
+    {
+      "id": "oled",
+      "nombre": "OLED SSD1306",
+      "funcion": "Display de control/diagnóstico visual (no forma parte de la cadena de audio)",
+      "componentes": "Módulo SSD1306 128x64, I2C @ 0x3C",
+      "senal": "I2C",
+      "pines": [
+        "GPIO21 (SDA)",
+        "GPIO23 (SCL)"
+      ],
+      "posicion": {
+        "x": 470,
+        "y": 700,
+        "w": 240,
+        "h": 90
+      },
+      "pinesEsquema": [
+        {
+          "id": "oled_sda",
+          "texto": "SDA",
+          "lado": "top"
+        },
+        {
+          "id": "oled_scl",
+          "texto": "SCL",
+          "lado": "top"
+        }
+      ]
+    }
+  ],
+  "conexiones": [
+    {
+      "from": "power",
+      "fromPin": "p_3v3_logic",
+      "to": "esp32",
+      "toPin": "e_top_3v3",
+      "label": "3V3 lógica",
+      "categoria": "power"
+    },
+    {
+      "from": "power",
+      "fromPin": "p_3v3_analog",
+      "to": "rc_filter",
+      "toPin": "rc_in",
+      "label": "3V3",
+      "categoria": "power"
+    },
+    {
+      "from": "rc_filter",
+      "fromPin": "rc_out",
+      "to": "dac",
+      "toPin": "d_top_3v3",
+      "label": "3V3 filtrado",
+      "categoria": "power"
+    },
+    {
+      "from": "mux",
+      "fromPin": "mux_sig",
+      "to": "esp32",
+      "toPin": "e_l_sig",
+      "label": "ADC1 (lectura)",
+      "categoria": "mux"
+    },
+    {
+      "from": "esp32",
+      "fromPin": "e_l_s0",
+      "to": "mux",
+      "toPin": "mux_s0",
+      "label": "S0",
+      "categoria": "mux"
+    },
+    {
+      "from": "esp32",
+      "fromPin": "e_l_s1",
+      "to": "mux",
+      "toPin": "mux_s1",
+      "label": "S1",
+      "categoria": "mux"
+    },
+    {
+      "from": "esp32",
+      "fromPin": "e_l_s2",
+      "to": "mux",
+      "toPin": "mux_s2",
+      "label": "S2",
+      "categoria": "mux"
+    },
+    {
+      "from": "esp32",
+      "fromPin": "e_l_s3",
+      "to": "mux",
+      "toPin": "mux_s3",
+      "label": "S3",
+      "categoria": "mux"
+    },
+    {
+      "from": "buttons",
+      "fromPin": "btn_rojo",
+      "to": "esp32",
+      "toPin": "e_l_rojo",
+      "label": "wave sirena",
+      "categoria": "buttons"
+    },
+    {
+      "from": "buttons",
+      "fromPin": "btn_blanco",
+      "to": "esp32",
+      "toPin": "e_l_blanco",
+      "label": "sel LFO/página",
+      "categoria": "buttons"
+    },
+    {
+      "from": "buttons",
+      "fromPin": "btn_verde",
+      "to": "esp32",
+      "toPin": "e_l_verde",
+      "label": "ON/OFF LFO",
+      "categoria": "buttons"
+    },
+    {
+      "from": "buttons",
+      "fromPin": "btn_negro",
+      "to": "esp32",
+      "toPin": "e_l_negro",
+      "label": "wave LFO",
+      "categoria": "buttons"
+    },
+    {
+      "from": "buttons",
+      "fromPin": "btn_axis",
+      "to": "esp32",
+      "toPin": "e_l_axis",
+      "label": "scope eje X/Y",
+      "categoria": "buttons"
+    },
+    {
+      "from": "buttons",
+      "fromPin": "btn_scale",
+      "to": "esp32",
+      "toPin": "e_l_scale",
+      "label": "scope escala",
+      "categoria": "buttons"
+    },
+    {
+      "from": "esp32",
+      "fromPin": "e_r_bck",
+      "to": "dac",
+      "toPin": "d_l_bck",
+      "label": "I2S BCK",
+      "categoria": "i2s"
+    },
+    {
+      "from": "esp32",
+      "fromPin": "e_r_ws",
+      "to": "dac",
+      "toPin": "d_l_ws",
+      "label": "I2S WS/LRCK",
+      "categoria": "i2s"
+    },
+    {
+      "from": "esp32",
+      "fromPin": "e_r_din",
+      "to": "dac",
+      "toPin": "d_l_din",
+      "label": "I2S DIN",
+      "categoria": "i2s"
+    },
+    {
+      "from": "dac",
+      "fromPin": "d_r_l",
+      "to": "salida_audio",
+      "toPin": "sal_l",
+      "label": "Audio L",
+      "categoria": "audio"
+    },
+    {
+      "from": "dac",
+      "fromPin": "d_r_r",
+      "to": "salida_audio",
+      "toPin": "sal_r",
+      "label": "Audio R",
+      "categoria": "audio"
+    },
+    {
+      "from": "esp32",
+      "fromPin": "e_b_sda",
+      "to": "oled",
+      "toPin": "oled_sda",
+      "label": "I2C SDA",
+      "categoria": "i2c"
+    },
+    {
+      "from": "esp32",
+      "fromPin": "e_b_scl",
+      "to": "oled",
+      "toPin": "oled_scl",
+      "label": "I2C SCL",
+      "categoria": "i2c"
+    }
+  ],
+  "modulosFirmware": [
+    {
+      "id": "setupI2S",
+      "nombre": "setupI2S()",
+      "archivo": "src/main.cpp",
+      "linea": 1042,
+      "responsabilidad": "Configura I2S maestro, 16-bit estéreo @ 44.1kHz, 8 buffers DMA x 256 muestras",
+      "perifericos": [
+        "I2S_NUM_0"
+      ]
+    },
+    {
+      "id": "setupWiFiScope",
+      "nombre": "setupWiFiScope() / updateWifiScopeState()",
+      "archivo": "src/main.cpp",
+      "linea": 596,
+      "responsabilidad": "Conexión WiFi no bloqueante para el osciloscopio remoto; TX power reducida y modem sleep para minimizar picos de corriente del radio",
+      "perifericos": [
+        "WiFi (radio 2.4GHz)"
+      ]
+    },
+    {
+      "id": "evalSirenCarrier",
+      "nombre": "evalSirenCarrier()",
+      "archivo": "src/main.cpp",
+      "linea": 754,
+      "responsabilidad": "Genera el oscilador portador (sirena): 5 formas de onda",
+      "perifericos": []
+    },
+    {
+      "id": "lfoCore",
+      "nombre": "nextLfoRaw() / evalWaveByPhase()",
+      "archivo": "src/main.cpp",
+      "linea": 778,
+      "responsabilidad": "Generan formas de onda de LFO y avanzan su fase",
+      "perifericos": []
+    },
+    {
+      "id": "pitchMod",
+      "nombre": "Modulación de pitch (loop principal)",
+      "archivo": "src/main.cpp",
+      "linea": 1126,
+      "responsabilidad": "Aplica Pitch LFO a la frecuencia portadora, clamp 60-2800 Hz",
+      "perifericos": []
+    },
+    {
+      "id": "vca",
+      "nombre": "VCA / Volume LFO (loop principal)",
+      "archivo": "src/main.cpp",
+      "linea": 1128,
+      "responsabilidad": "Aplica envolvente de amplitud y OUTPUT_GAIN (0.10)",
+      "perifericos": []
+    },
+    {
+      "id": "processFilter",
+      "nombre": "processFilter()",
+      "archivo": "src/main.cpp",
+      "linea": 787,
+      "responsabilidad": "Filtro morphing 1-polo LP/HP, cutoff 280-6780 Hz",
+      "perifericos": []
+    },
+    {
+      "id": "processReverb",
+      "nombre": "processReverb()",
+      "archivo": "src/main.cpp",
+      "linea": 803,
+      "responsabilidad": "Reverb Schroeder, 2 líneas de delay (31.8ms/43.1ms)",
+      "perifericos": []
+    },
+    {
+      "id": "processDelay",
+      "nombre": "processDelay()",
+      "archivo": "src/main.cpp",
+      "linea": 817,
+      "responsabilidad": "Delay con feedback, buffer circular hasta ~272ms",
+      "perifericos": []
+    },
+    {
+      "id": "processDcBlock",
+      "nombre": "processDcBlock()",
+      "archivo": "src/main.cpp",
+      "linea": 378,
+      "responsabilidad": "Filtro de bloqueo DC antes de la salida final",
+      "perifericos": []
+    },
+    {
+      "id": "updateControls",
+      "nombre": "updateControls()",
+      "archivo": "src/main.cpp",
+      "linea": 842,
+      "responsabilidad": "Lee 12 potenciómetros vía MUX, actualiza parámetros, detecta botones",
+      "perifericos": [
+        "ADC1",
+        "GPIO16-19"
+      ]
+    },
+    {
+      "id": "mainLoop",
+      "nombre": "Loop principal (síntesis por muestra)",
+      "archivo": "src/main.cpp",
+      "linea": 1100,
+      "responsabilidad": "Orquesta oscilador -> VCA -> filtro -> reverb -> delay -> DC block -> clamp -> int16 -> I2S write",
+      "perifericos": [
+        "I2S_NUM_0"
+      ]
+    },
+    {
+      "id": "drawDisplay",
+      "nombre": "drawDisplay() / drawScopePage()",
+      "archivo": "src/main.cpp",
+      "linea": 948,
+      "responsabilidad": "Renderiza las páginas del OLED y el osciloscopio",
+      "perifericos": [
+        "I2C"
+      ]
+    }
+  ],
+  "sintomas": [
+    {
+      "id": "clipping",
+      "nombre": "Distorsión / clipping",
+      "causas": [
+        "OUTPUT_GAIN demasiado alto o suma de efectos (reverb+delay) satura antes del clamp final",
+        "Volume LFO con depth mal calibrado empuja la amplitud fuera de rango antes del clamp",
+        "Nivel de salida del PCM5102A excede la entrada del amplificador/parlante aguas abajo"
+      ],
+      "hardware": [
+        "dac"
+      ],
+      "firmware": [
+        "vca",
+        "mainLoop"
+      ]
+    },
+    {
+      "id": "hiss",
+      "nombre": "Ruido de fondo constante (hiss)",
+      "causas": [
+        "Filtro RC de alimentación del pin Analog del PCM5102A insuficiente o mal valorado",
+        "Acoplamiento de ruido digital del ESP32/MUX hacia el riel analógico del DAC",
+        "Mala referencia de tierra entre la sección digital y la alimentación del DAC"
+      ],
+      "hardware": [
+        "rc_filter",
+        "dac",
+        "power"
+      ],
+      "firmware": []
+    },
+    {
+      "id": "hum",
+      "nombre": "Zumbido periódico (hum 50/60Hz)",
+      "causas": [
+        "Lazo de tierra entre fuente, boost converter y regulador",
+        "Filtrado insuficiente en la salida del boost converter o el regulador 3.3V"
+      ],
+      "hardware": [
+        "power"
+      ],
+      "firmware": []
+    },
+    {
+      "id": "aliasing",
+      "nombre": "Aliasing / artefactos metálicos en tonos agudos",
+      "causas": [
+        "El oscilador portador supera frecuencias razonables para 44.1kHz sin oversampling (revisar clamp 60-2800 Hz)",
+        "Formas de onda con bordes duros (SQR/SAW) generadas sin band-limiting en evalSirenCarrier()"
+      ],
+      "hardware": [],
+      "firmware": [
+        "evalSirenCarrier",
+        "pitchMod"
+      ]
+    },
+    {
+      "id": "clicks",
+      "nombre": "Clicks/pops al cambiar de forma de onda o parámetro",
+      "causas": [
+        "Cambio abrupto de forma de onda (botón rojo/negro) sin crossfade",
+        "updateControls() corre en el mismo loop que la síntesis y puede introducir saltos si una lectura de pot es ruidosa (revisar POT_SMOOTH_ALPHA)",
+        "Cambios de morph de filtro sin suavizado suficiente"
+      ],
+      "hardware": [],
+      "firmware": [
+        "updateControls",
+        "processFilter",
+        "mainLoop"
+      ]
+    },
+    {
+      "id": "pitch_drift",
+      "nombre": "Desafinación o drift de pitch",
+      "causas": [
+        "Sweep LFO interno (0.85Hz) o Pitch LFO con depth/rate mal calibrado desde los pots I0/I1",
+        "Ruido en la lectura ADC del MUX (GPIO35) afectando la frecuencia base"
+      ],
+      "hardware": [
+        "mux"
+      ],
+      "firmware": [
+        "pitchMod",
+        "lfoCore",
+        "updateControls"
+      ]
+    },
+    {
+      "id": "audio_dropout",
+      "nombre": "Audio intermitente / se corta",
+      "causas": [
+        "Picos de corriente del radio WiFi (~300-500mA en TX/asociación) hundiendo momentáneamente el riel de 3.3V y glitcheando el DMA de I2S — más notorio sin USB conectado, pero puede pasar también por USB con fuentes marginales",
+        "Buffer underrun de I2S (8 buffers x 256 muestras, ~46ms de latencia) si el loop principal se retrasa",
+        "drawDisplay()/drawScopePage() (I2C) bloqueando el loop de audio el tiempo suficiente para causar underrun",
+        "Problema de alimentación (caída de voltaje del boost converter bajo carga)"
+      ],
+      "hardware": [
+        "power"
+      ],
+      "firmware": [
+        "mainLoop",
+        "drawDisplay",
+        "setupI2S",
+        "setupWiFiScope"
+      ]
+    },
+    {
+      "id": "standalone_brownout",
+      "nombre": "Funciona por USB pero se cuelga / no suena con fuente propia (sin USB)",
+      "causas": [
+        "Brownout del riel de 3.3V causado por los picos de corriente del radio WiFi (~300-500mA), que la fuente standalone (Boost + regulador lineal) no puede sostener con la velocidad necesaria — el puerto USB del PC sí, por su baja impedancia y mayor capacitancia",
+        "Falta de capacitor de bulk (470-1000µF baja ESR) cerca del pin 3.3V del ESP32",
+        "Regulador lineal con respuesta transitoria lenta o corriente máxima insuficiente (común en módulos AMS1117 baratos)"
+      ],
+      "hardware": [
+        "power"
+      ],
+      "firmware": [
+        "setupWiFiScope"
+      ]
+    },
+    {
+      "id": "no_response",
+      "nombre": "Un potenciómetro o botón no responde",
+      "causas": [
+        "Canal del MUX mal cableado o pot dañado (revisar selectMuxChannel()/readMuxRaw())",
+        "Pin de botón mal configurado o pulsador dañado (debounce 40ms en updateButtonPressed())",
+        "Mapeo de canal incorrecto en updateControls() (revisar tabla I0-I11 en README.md)"
+      ],
+      "hardware": [
+        "mux",
+        "buttons"
+      ],
+      "firmware": [
+        "updateControls"
+      ]
+    },
+    {
+      "id": "no_audio",
+      "nombre": "No hay audio en absoluto",
+      "causas": [
+        "Conexión I2S incorrecta (GPIO22/25/26) entre ESP32 y PCM5102A",
+        "Falla en setupI2S() o en la inicialización del DAC",
+        "Pin Analog del PCM5102A sin alimentación (revisar filtro RC y regulador 3.3V)",
+        "OUTPUT_GAIN o todos los LFOs configurados de forma que anulan la señal (ej. Volume LFO depth=1 y fase en silencio)"
+      ],
+      "hardware": [
+        "dac",
+        "rc_filter",
+        "power"
+      ],
+      "firmware": [
+        "setupI2S",
+        "mainLoop",
+        "vca"
+      ]
+    },
+    {
+      "id": "display_frozen",
+      "nombre": "OLED no responde o se congela",
+      "causas": [
+        "Dirección I2C incorrecta o conexión SDA/SCL (GPIO21/23) defectuosa",
+        "drawDisplay() bloqueado o I2C colgado afectando también el loop de audio"
+      ],
+      "hardware": [
+        "oled"
+      ],
+      "firmware": [
+        "drawDisplay"
+      ]
+    }
+  ]
+};
