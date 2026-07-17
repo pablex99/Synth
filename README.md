@@ -1,6 +1,6 @@
 # Synth (ESP32 + PCM5102A)
 
-Firmware simplificado de sirena con un solo LFO de pitch y control por MUX, botones y OLED.
+Firmware simplificado de sirena con un solo LFO de pitch y control por MUX, boton de forma de onda y OLED.
 
 ## 0. Resumen Actual
 
@@ -10,6 +10,7 @@ Firmware simplificado de sirena con un solo LFO de pitch y control por MUX, boto
 | Ruido principal por controles | Corregido al retirar capacitores en wipers |
 | Acople entre parametros | Mitigado con escaneo MUX por canal + tiempos de asentamiento |
 | Ruido por OLED/I2C | Mitigado con refresco desacoplado y menos frecuente |
+| Modo de funcionamiento | Unico modo sirena |
 | Puerto de carga validado | COM3 |
 
 Arquitectura de senal actual:
@@ -22,7 +23,7 @@ flowchart LR
 	DSP --> I2S[I2S GPIO26/25/22]
 	I2S --> DAC[PCM5102A]
 	DAC --> JACK[Salida Jack]
-	BTN[Botones GPIO27 y GPIO13] --> DSP
+	BTN[Boton GPIO27] --> DSP
 	OLED[OLED I2C GPIO21/23] --> UI[Interfaz]
 	DSP --> UI
 ```
@@ -31,9 +32,9 @@ flowchart LR
 
 - Salida de audio por I2S en estereo hacia PCM5102A.
 - Un solo LFO activo: Pitch.
-- Formas de onda de sirena: ORIG, SIN, SQR, TRI, SAW.
+- Formas de onda de sirena: Original (O), Seno, Cuadrada, Triangular y Sierra.
 - Controles activos: Gain, Filter Morph, Reverb Mix, Delay Mix.
-- OLED de 2 paginas.
+- OLED de pagina unica.
 - Escaneo de MUX por canal (no barrido completo por ciclo) para reducir acople entre controles.
 - Lectura ADC con mayor tiempo de asentamiento para reducir arrastre entre canales del CD4067.
 - Refresco OLED desacoplado y menos frecuente para bajar ruido inducido por trafico I2C.
@@ -145,7 +146,7 @@ Conexion electrica (INPUT_PULLUP en firmware):
 Funcion en firmware:
 
 - Boton rojo (GPIO27): cambia la forma de onda de la sirena en este orden: ORIG -> SIN -> SQR -> TRI -> SAW.
-- Boton blanco (GPIO13): alterna la pagina del OLED entre vista principal y vista de detalle de controles.
+- Boton blanco (GPIO13): sin funcion activa en el modo actual.
 
 ## 4. Resumen Rapido De Pines ESP32
 
@@ -155,7 +156,7 @@ Funcion en firmware:
 | MUX control | GPIO16 (S0), GPIO17 (S1), GPIO19 (S2), GPIO18 (S3) |
 | MUX lectura ADC | GPIO35 (SIG/OUT) |
 | OLED I2C | GPIO21 (SDA), GPIO23 (SCL) |
-| Botones | GPIO27 (Wave), GPIO13 (Page) |
+| Botones | GPIO27 (Wave), GPIO13 (sin funcion activa) |
 
 ## 5. Build Y Carga
 
