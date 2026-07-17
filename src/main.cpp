@@ -139,7 +139,6 @@ DebouncedButton btnSirenWave;
 DebouncedButton btnPage;
 
 SirenWave sirenWave = SIREN_ORIGINAL;
-uint8_t displayPage = 0;
 
 // Estado ADC por canal: valor crudo suavizado y valor de control mapeado.
 float muxRawSmooth[POT_CHANNELS] = {
@@ -194,21 +193,51 @@ float mapLinear(float normalized, float minValue, float maxValue) {
   return minValue + normalized * (maxValue - minValue);
 }
 
-// Nombres legibles usados por la OLED.
-const char* sirenWaveName(SirenWave shape) {
+// Dibuja un icono de forma de onda en la OLED sin depender de caracteres.
+void drawWaveIcon(int x, int y, SirenWave shape) {
+  const int w = 26;
+  const int h = 8;
+  const int yMid = y + (h / 2);
+  const int yTop = y;
+  const int yBot = y + h;
+
   switch (shape) {
     case SIREN_ORIGINAL:
-      return "ORIG";
+      // Se usa una O mayuscula para diferenciar claramente el modo original.
+      display.setCursor(x + 8, yTop);
+      display.print("O");
+      break;
     case SIREN_SINE:
-      return "SIN";
+      display.drawLine(x, yMid, x + 4, yTop + 1, SSD1306_WHITE);
+      display.drawLine(x + 4, yTop + 1, x + 8, yMid, SSD1306_WHITE);
+      display.drawLine(x + 8, yMid, x + 12, yBot - 1, SSD1306_WHITE);
+      display.drawLine(x + 12, yBot - 1, x + 16, yMid, SSD1306_WHITE);
+      display.drawLine(x + 16, yMid, x + 20, yTop + 1, SSD1306_WHITE);
+      display.drawLine(x + 20, yTop + 1, x + 24, yMid, SSD1306_WHITE);
+      break;
     case SIREN_SQUARE:
-      return "SQR";
+      display.drawLine(x, yBot - 1, x + 6, yBot - 1, SSD1306_WHITE);
+      display.drawLine(x + 6, yBot - 1, x + 6, yTop + 1, SSD1306_WHITE);
+      display.drawLine(x + 6, yTop + 1, x + 14, yTop + 1, SSD1306_WHITE);
+      display.drawLine(x + 14, yTop + 1, x + 14, yBot - 1, SSD1306_WHITE);
+      display.drawLine(x + 14, yBot - 1, x + 22, yBot - 1, SSD1306_WHITE);
+      break;
     case SIREN_TRIANGLE:
-      return "TRI";
+      display.drawLine(x, yBot - 1, x + 6, yTop + 1, SSD1306_WHITE);
+      display.drawLine(x + 6, yTop + 1, x + 12, yBot - 1, SSD1306_WHITE);
+      display.drawLine(x + 12, yBot - 1, x + 18, yTop + 1, SSD1306_WHITE);
+      display.drawLine(x + 18, yTop + 1, x + 24, yBot - 1, SSD1306_WHITE);
+      break;
     case SIREN_SAW:
-      return "SAW";
+      display.drawLine(x, yBot - 1, x + 8, yTop + 1, SSD1306_WHITE);
+      display.drawLine(x + 8, yTop + 1, x + 8, yBot - 1, SSD1306_WHITE);
+      display.drawLine(x + 8, yBot - 1, x + 16, yTop + 1, SSD1306_WHITE);
+      display.drawLine(x + 16, yTop + 1, x + 16, yBot - 1, SSD1306_WHITE);
+      display.drawLine(x + 16, yBot - 1, x + 24, yTop + 1, SSD1306_WHITE);
+      break;
     default:
-      return "?";
+      display.drawRect(x, yTop + 1, w - 2, h - 1, SSD1306_WHITE);
+      break;
   }
 }
 
@@ -309,9 +338,8 @@ void updateControls() {
     sirenWave = static_cast<SirenWave>((sirenWave + 1) % SIREN_WAVE_COUNT);
   }
 
-  if (updateButtonPressed(btnPage)) {
-    displayPage = (displayPage + 1) % 2;
-  }
+  // Se mantiene lectura para debounce estable aunque no tenga accion asignada.
+  updateButtonPressed(btnPage);
 }
 
 // Fuerza valores fijos conocidos en modo diagnostico.
@@ -415,13 +443,11 @@ bool displayNeedsUpdate(uint32_t nowMs) {
   static bool initialized = false;
   static uint32_t lastDisplayMs = 0;
   static uint32_t lastForcedMs = 0;
-  static uint8_t lastPage = 0;
   static SirenWave lastWave = SIREN_ORIGINAL;
   static float lastPot[POT_CHANNELS] = {0.0f};
 
   if (!initialized) {
     initialized = true;
-    lastPage = displayPage;
     lastWave = sirenWave;
     for (int ch = 0; ch < POT_CHANNELS; ch++) {
       lastPot[ch] = potMapped[ch];
@@ -431,7 +457,7 @@ bool displayNeedsUpdate(uint32_t nowMs) {
     return true;
   }
 
-  bool changed = (displayPage != lastPage) || (sirenWave != lastWave);
+  bool changed = (sirenWave != lastWave);
   for (int ch = 0; ch < POT_CHANNELS; ch++) {
     if (fabsf(potMapped[ch] - lastPot[ch]) > (potDeadband[ch] * 2.0f)) {
       changed = true;
@@ -445,7 +471,6 @@ bool displayNeedsUpdate(uint32_t nowMs) {
     return false;
   }
 
-  lastPage = displayPage;
   lastWave = sirenWave;
   for (int ch = 0; ch < POT_CHANNELS; ch++) {
     lastPot[ch] = potMapped[ch];
@@ -469,61 +494,31 @@ void drawDisplay() {
   display.setTextSize(1);
   display.setTextColor(SSD1306_WHITE);
 
-  if (displayPage == 0) {
-    display.setCursor(0, 0);
-    display.print("SIRENA SIMPLE");
+  display.setCursor(0, 0);
+  display.print("SIRENA");
 
-    display.setCursor(0, 10);
-    display.print("Wave: ");
-    display.print(sirenWaveName(sirenWave));
+  display.setCursor(0, 10);
+  display.print("Wave:");
+  drawWaveIcon(38, 10, sirenWave);
 
-    display.setCursor(0, 20);
-    display.print("LFO R:");
-    display.print(potMapped[POT_LFO_RATE], 2);
-    display.print(" D:");
-    display.print(potMapped[POT_LFO_DEPTH], 0);
+  display.setCursor(0, 20);
+  display.print("LFO R:");
+  display.print(potMapped[POT_LFO_RATE], 2);
+  display.print(" D:");
+  display.print(potMapped[POT_LFO_DEPTH], 0);
 
-    display.setCursor(0, 32);
-    display.print("Gain:");
-    display.print(static_cast<int>(potMapped[POT_MASTER_GAIN] * 100.0f));
-    display.print("%  F:");
-    display.print(potMapped[POT_FILTER_MORPH], 2);
+  display.setCursor(0, 32);
+  display.print("Gain:");
+  display.print(static_cast<int>(potMapped[POT_MASTER_GAIN] * 100.0f));
+  display.print("%  F:");
+  display.print(potMapped[POT_FILTER_MORPH], 2);
 
-    display.setCursor(0, 44);
-    display.print("Rev:");
-    display.print(static_cast<int>(potMapped[POT_REVERB_MIX] * 100.0f));
-    display.print("%  Dly:");
-    display.print(static_cast<int>(potMapped[POT_DELAY_MIX] * 100.0f));
-    display.print("%");
-
-    display.setCursor(0, 56);
-    display.print("I0R I1D I2G I3F I4R I5D");
-  } else {
-    display.setCursor(0, 0);
-    display.print("CTRL DETAIL");
-
-    display.setCursor(0, 10);
-    display.print("I0 RateHz: ");
-    display.print(potMapped[POT_LFO_RATE], 2);
-
-    display.setCursor(0, 20);
-    display.print("I1 DepthHz:");
-    display.print(potMapped[POT_LFO_DEPTH], 0);
-
-    display.setCursor(0, 30);
-    display.print("I2 Gain:   ");
-    display.print(potMapped[POT_MASTER_GAIN], 2);
-
-    display.setCursor(0, 40);
-    display.print("I3 Filter: ");
-    display.print(potMapped[POT_FILTER_MORPH], 2);
-
-    display.setCursor(0, 50);
-    display.print("I4 Rev: ");
-    display.print(potMapped[POT_REVERB_MIX], 2);
-    display.print(" I5 Dly: ");
-    display.print(potMapped[POT_DELAY_MIX], 2);
-  }
+  display.setCursor(0, 44);
+  display.print("Rev:");
+  display.print(static_cast<int>(potMapped[POT_REVERB_MIX] * 100.0f));
+  display.print("%  Dly:");
+  display.print(static_cast<int>(potMapped[POT_DELAY_MIX] * 100.0f));
+  display.print("%");
 
   display.display();
 }
