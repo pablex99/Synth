@@ -2,6 +2,31 @@
 
 Firmware simplificado de sirena con un solo LFO de pitch y control por MUX, botones y OLED.
 
+## 0. Resumen Actual
+
+| Estado | Resultado |
+|---|---|
+| Audio base I2S + PCM5102A | Estable |
+| Ruido principal por controles | Corregido al retirar capacitores en wipers |
+| Acople entre parametros | Mitigado con escaneo MUX por canal + tiempos de asentamiento |
+| Ruido por OLED/I2C | Mitigado con refresco desacoplado y menos frecuente |
+| Puerto de carga validado | COM3 |
+
+Arquitectura de senal actual:
+
+```mermaid
+flowchart LR
+	POTS[Potenciometros I0-I5] --> MUX[CD4067]
+	MUX --> ADC[GPIO35 ADC ESP32]
+	ADC --> DSP[Motor de sintesis y DSP]
+	DSP --> I2S[I2S GPIO26/25/22]
+	I2S --> DAC[PCM5102A]
+	DAC --> JACK[Salida Jack]
+	BTN[Botones GPIO27 y GPIO13] --> DSP
+	OLED[OLED I2C GPIO21/23] --> UI[Interfaz]
+	DSP --> UI
+```
+
 ## 1. Estado Del Firmware
 
 - Salida de audio por I2S en estereo hacia PCM5102A.
