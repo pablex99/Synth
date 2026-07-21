@@ -17,42 +17,11 @@ Firmware simplificado de sirena con un solo LFO de pitch y control por MUX, boto
 
 Arquitectura de senal actual:
 
-```mermaid
-%%{init: {'flowchart': {'curve': 'stepAfter', 'nodeSpacing': 28, 'rankSpacing': 32}, 'themeVariables': {'fontSize': '12px'}}}%%
-flowchart LR
-  POTS[Pots I0-I5] --> MUX[CD4067] --> ESP[ESP32] --> DAC[PCM5102A] --> AUDIO[Audio analogica]
-
-  BTN[Botones G13 y G27] --> ESP
-  ESP --> OLED[OLED I2C]
-  OLED --> UI[Interfaz]
-
-  BTN --- OLED
-  OLED --- UI
-  POTS --- BTN
-  DAC --- OLED
-  AUDIO --- UI
-
-  linkStyle 7 stroke:transparent,stroke-width:0px
-  linkStyle 8 stroke:transparent,stroke-width:0px
-  linkStyle 9 stroke:transparent,stroke-width:0px
-  linkStyle 10 stroke:transparent,stroke-width:0px
-  linkStyle 11 stroke:transparent,stroke-width:0px
-```
+![Arquitectura de senal](docs/img/signal-architecture.svg)
 
 Diagrama de panel de control (vista frontal):
 
-```mermaid
-flowchart LR
-  P5["Delay Mix<br/>┌───────┐<br/>│   ◉   │<br/>└───┬───┘<br/>I5"] --- P4["Reverb Mix<br/>┌───────┐<br/>│   ◉   │<br/>└───┬───┘<br/>I4"] --- P3["Filter Morph<br/>┌───────┐<br/>│   ◉   │<br/>└───┬───┘<br/>I3"] --- P2["Pitch Base<br/>┌───────┐<br/>│   ◉   │<br/>└───┬───┘<br/>I2"] --- P1["BPM Sirena<br/>┌───────┐<br/>│   ◉   │<br/>└───┬───┘<br/>I1"] --- P0["Ganancia General<br/>┌───────┐<br/>│   ◉   │<br/>└───┬───┘<br/>I0"] --- BW["Boton blanco GPIO13<br/>┌───────┐<br/>│   ◯   │<br/>│   ⚪   │<br/>└───────┘<br/>Toque: onda parametro<br/>Sostenido: activa/desactiva onda parametro"] --- BR["Boton rojo GPIO27<br/>┌───────┐<br/>│   ◯   │<br/>│   🔴   │<br/>└───────┘<br/>Toque: onda base<br/>Sostenido: cambia de pagina"]
-
-  linkStyle 0 stroke:transparent,stroke-width:0px
-  linkStyle 1 stroke:transparent,stroke-width:0px
-  linkStyle 2 stroke:transparent,stroke-width:0px
-  linkStyle 3 stroke:transparent,stroke-width:0px
-  linkStyle 4 stroke:transparent,stroke-width:0px
-  linkStyle 5 stroke:transparent,stroke-width:0px
-  linkStyle 6 stroke:transparent,stroke-width:0px
-```
+![Panel de control](docs/img/control-panel-layout.svg)
 
 ## 1. Estado Del Firmware
 
