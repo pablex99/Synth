@@ -25,23 +25,28 @@ flowchart LR
   DAC --> AUDIO[Senal analogica de audio]
 
   BTN[Botones GPIO27 y GPIO13] --> ESP
-  POTS --- BTN
-
   ESP --> OLED[OLED I2C GPIO21/23]
-  DAC --- OLED
   OLED --> UI[Interfaz]
+
+	BTN --- OLED
+	OLED --- UI
+	linkStyle 7 stroke:transparent,stroke-width:0px
+	linkStyle 8 stroke:transparent,stroke-width:0px
 ```
 
 Diagrama de panel de control (vista frontal):
 
 ```mermaid
 flowchart LR
-	P5["I5 Delay Mix"] --- P4["I4 Reverb Mix"] --- P3["I3 Filter Morph"] --- P2["I2 Pitch Base Nota"] --- P1["I1 Velocidad Sirena BPM"] --- P0["I0 Ganancia General"]
+	P5["Delay Mix<br/>┌─────┐<br/>│  O  │<br/>└──┬──┘<br/>I5"] --- P4["Reverb Mix<br/>┌─────┐<br/>│  O  │<br/>└──┬──┘<br/>I4"] --- P3["Filter Morph<br/>┌─────┐<br/>│  O  │<br/>└──┬──┘<br/>I3"] --- P2["Pitch Base Nota<br/>┌─────┐<br/>│  O  │<br/>└──┬──┘<br/>I2"] --- P1["Velocidad Sirena BPM<br/>┌─────┐<br/>│  O  │<br/>└──┬──┘<br/>I1"] --- P0["Ganancia General<br/>┌─────┐<br/>│  O  │<br/>└──┬──┘<br/>I0"] --- BW["Boton blanco GPIO13<br/>Toque: recorre onda de variacion<br/>Sostenido: activa/desactiva variacion de la pagina actual"] --- BR["Boton rojo GPIO27<br/>Toque: cambia onda base<br/>Sostenido: cambia de pagina I0->I1->I2->I3->I4->I5->I0"]
 
-	P0 --- BW["Boton blanco GPIO13"] --- BR["Boton rojo GPIO27"]
-
-	BW --> BW_DESC["Toque: recorre onda de variacion\nSostenido: activa/desactiva variacion de la pagina actual"]
-	BR --> BR_DESC["Toque: cambia onda base\nSostenido: cambia de pagina I0->I1->I2->I3->I4->I5->I0"]
+	linkStyle 0 stroke:transparent,stroke-width:0px
+	linkStyle 1 stroke:transparent,stroke-width:0px
+	linkStyle 2 stroke:transparent,stroke-width:0px
+	linkStyle 3 stroke:transparent,stroke-width:0px
+	linkStyle 4 stroke:transparent,stroke-width:0px
+	linkStyle 5 stroke:transparent,stroke-width:0px
+	linkStyle 6 stroke:transparent,stroke-width:0px
 ```
 
 ## 1. Estado Del Firmware
