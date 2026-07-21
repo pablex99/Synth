@@ -18,45 +18,30 @@ Firmware simplificado de sirena con un solo LFO de pitch y control por MUX, boto
 Arquitectura de senal actual:
 
 ```mermaid
-flowchart TB
-	subgraph MID[Cadena principal]
-		direction LR
-		POTS[Potenciometros I0-I5] --> MUX[CD4067]
-		MUX --> ESP[ESP32]
-		ESP --> DAC[PCM5102A]
-		DAC --> AUDIO[Senal analogica de audio]
-	end
+flowchart LR
+  POTS[Potenciometros I0-I5] --> MUX[CD4067]
+  MUX --> ESP[ESP32]
+  ESP --> DAC[PCM5102A]
+  DAC --> AUDIO[Senal analogica de audio]
 
-	OLED[OLED I2C GPIO21/23]
-	BTNW[Boton blanco GPIO13]
-	BTNR[Boton rojo GPIO27]
+  BTN[Botones GPIO27 y GPIO13] --> ESP
+  POTS --- BTN
 
-	ESP --> OLED
-	ESP --> BTNW
-	ESP --> BTNR
+  ESP --> OLED[OLED I2C GPIO21/23]
+  DAC --- OLED
+  OLED --> UI[Interfaz]
 ```
 
 Diagrama de panel de control (vista frontal):
 
 ```mermaid
-flowchart TB
-  subgraph TOP[Potenciometros (de derecha a izquierda: I0 a I5)]
-    direction LR
-    P5["I5<br/>Delay Mix"] --- P4["I4<br/>Reverb Mix"] --- P3["I3<br/>Filter Morph"] --- P2["I2<br/>Pitch Base (Nota)"] --- P1["I1<br/>Velocidad Sirena (BPM)"] --- P0["I0<br/>Ganancia General"]
-  end
+flowchart LR
+	P5["I5 Delay Mix"] --- P4["I4 Reverb Mix"] --- P3["I3 Filter Morph"] --- P2["I2 Pitch Base Nota"] --- P1["I1 Velocidad Sirena BPM"] --- P0["I0 Ganancia General"]
 
-  subgraph RIGHT[Botones a la derecha]
-    direction LR
-    BW["Boton blanco<br/>GPIO13"] --- BR["Boton rojo<br/>GPIO27"]
-  end
+	P0 --- BW["Boton blanco GPIO13"] --- BR["Boton rojo GPIO27"]
 
-  P0 --- BW
-
-  BW_DESC["Toque: recorre onda de variacion<br/>Sostenido: activa/desactiva variacion<br/>de la pagina actual"]
-  BR_DESC["Toque: cambia onda base<br/>Sostenido: cambia de pagina<br/>(I0->I1->I2->I3->I4->I5->I0)"]
-
-  BW --> BW_DESC
-  BR --> BR_DESC
+	BW --> BW_DESC["Toque: recorre onda de variacion\nSostenido: activa/desactiva variacion de la pagina actual"]
+	BR --> BR_DESC["Toque: cambia onda base\nSostenido: cambia de pagina I0->I1->I2->I3->I4->I5->I0"]
 ```
 
 ## 1. Estado Del Firmware
