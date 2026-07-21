@@ -18,44 +18,45 @@ Firmware simplificado de sirena con un solo LFO de pitch y control por MUX, boto
 Arquitectura de senal actual:
 
 ```mermaid
-flowchart LR
-	POTS[Potenciometros I0-I5] --> MUX[CD4067]
-	MUX --> ADC[GPIO35 ADC ESP32]
-	ADC --> DSP[Motor de sintesis y DSP]
-	DSP --> I2S[I2S GPIO26/25/22]
-	I2S --> DAC[PCM5102A]
-	DAC --> JACK[Salida Jack]
-	BTN[Botones GPIO27/GPIO13] --> UI
-	BTN --> DSP
-	OLED[OLED I2C GPIO21/23] --> UI[Interfaz]
-	DSP --> UI
+flowchart TB
+	subgraph MID[Cadena principal]
+		direction LR
+		POTS[Potenciometros I0-I5] --> MUX[CD4067]
+		MUX --> ESP[ESP32]
+		ESP --> DAC[PCM5102A]
+		DAC --> AUDIO[Senal analogica de audio]
+	end
+
+	OLED[OLED I2C GPIO21/23]
+	BTNW[Boton blanco GPIO13]
+	BTNR[Boton rojo GPIO27]
+
+	ESP --> OLED
+	ESP --> BTNW
+	ESP --> BTNR
 ```
 
 Diagrama de panel de control (vista frontal):
 
 ```mermaid
-flowchart LR
-	subgraph PANEL[Panel de Control]
-		direction RL
-		P5[I5\nDelay Mix]
-		P4[I4\nReverb Mix]
-		P3[I3\nFilter Morph]
-		P2[I2\nPitch Base\n(Nota)]
-		P1[I1\nVelocidad Sirena\n(BPM)]
-		P0[I0\nGanancia General]
-	end
+flowchart TB
+  subgraph TOP[Potenciometros (de derecha a izquierda: I0 a I5)]
+    direction LR
+    P5["I5<br/>Delay Mix"] --- P4["I4<br/>Reverb Mix"] --- P3["I3<br/>Filter Morph"] --- P2["I2<br/>Pitch Base (Nota)"] --- P1["I1<br/>Velocidad Sirena (BPM)"] --- P0["I0<br/>Ganancia General"]
+  end
 
-	subgraph BTNS[Botones]
-		direction LR
-		BW[Boton Blanco\nGPIO13]
-		BR[Boton Rojo\nGPIO27]
-	end
+  subgraph RIGHT[Botones a la derecha]
+    direction LR
+    BW["Boton blanco<br/>GPIO13"] --- BR["Boton rojo<br/>GPIO27"]
+  end
 
-	BW_DESC[Toque: recorre onda de variacion\nSostenido: activa/desactiva variacion\n(en la pagina actual)]
-	BR_DESC[Toque: cambia onda base\nSostenido: cambia de pagina\n(I0->I1->I2->I3->I4->I5->I0)]
+  P0 --- BW
 
-	BW --> BW_DESC
-	BR --> BR_DESC
+  BW_DESC["Toque: recorre onda de variacion<br/>Sostenido: activa/desactiva variacion<br/>de la pagina actual"]
+  BR_DESC["Toque: cambia onda base<br/>Sostenido: cambia de pagina<br/>(I0->I1->I2->I3->I4->I5->I0)"]
+
+  BW --> BW_DESC
+  BR --> BR_DESC
 ```
 
 ## 1. Estado Del Firmware
