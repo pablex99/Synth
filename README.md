@@ -1,6 +1,6 @@
 # Synth (ESP32 + PCM5102A)
 
-Firmware simplificado de sirena con un solo LFO de pitch y control por MUX, boton de forma de onda y OLED.
+Firmware simplificado de sirena con un solo LFO de pitch y control por MUX, botones con acciones por toque/pulsacion larga y OLED paginada.
 
 ## 0. Resumen Actual
 
@@ -11,7 +11,9 @@ Firmware simplificado de sirena con un solo LFO de pitch y control por MUX, boto
 | Acople entre parametros | Mitigado con escaneo MUX por canal + tiempos de asentamiento |
 | Ruido por OLED/I2C | Mitigado con refresco desacoplado y menos frecuente |
 | Modo de funcionamiento | Unico modo sirena |
-| Puerto de carga validado | COM3 |
+| Interaccion de botones | Toque corto y pulsacion larga activos en GPIO27 y GPIO13 |
+| Navegacion OLED | 6 paginas ciclicas (I0 a I5) |
+| Puerto de carga validado | COM3/COM4 (segun enumeracion del sistema) |
 
 Arquitectura de senal actual:
 
@@ -23,9 +25,37 @@ flowchart LR
 	DSP --> I2S[I2S GPIO26/25/22]
 	I2S --> DAC[PCM5102A]
 	DAC --> JACK[Salida Jack]
-	BTN[Boton GPIO27] --> DSP
+	BTN[Botones GPIO27/GPIO13] --> UI
+	BTN --> DSP
 	OLED[OLED I2C GPIO21/23] --> UI[Interfaz]
 	DSP --> UI
+```
+
+Diagrama de panel de control (vista frontal):
+
+```mermaid
+flowchart LR
+	subgraph PANEL[Panel de Control]
+		direction RL
+		P5[I5\nDelay Mix]
+		P4[I4\nReverb Mix]
+		P3[I3\nFilter Morph]
+		P2[I2\nPitch Base\n(Nota)]
+		P1[I1\nVelocidad Sirena\n(BPM)]
+		P0[I0\nGanancia General]
+	end
+
+	subgraph BTNS[Botones]
+		direction LR
+		BW[Boton Blanco\nGPIO13]
+		BR[Boton Rojo\nGPIO27]
+	end
+
+	BW_DESC[Toque: recorre onda de variacion\nSostenido: activa/desactiva variacion\n(en la pagina actual)]
+	BR_DESC[Toque: cambia onda base\nSostenido: cambia de pagina\n(I0->I1->I2->I3->I4->I5->I0)]
+
+	BW --> BW_DESC
+	BR --> BR_DESC
 ```
 
 ## 1. Estado Del Firmware
@@ -33,8 +63,16 @@ flowchart LR
 - Salida de audio por I2S en estereo hacia PCM5102A.
 - Un solo LFO activo: Pitch.
 - Formas de onda de sirena: Original (O), Seno, Cuadrada, Triangular y Sierra.
-- Controles activos: Gain, Filter Morph, Reverb Mix, Delay Mix.
-- OLED de pagina unica.
+- Onda de variacion independiente (preview) con los mismos simbolos graficos de la onda base.
+- Nuevo orden de controles:
+	- I0: Gain general.
+	- I1: Velocidad de sirena (BPM y Hz).
+	- I2: Pitch base/nota central de la sirena (se muestra nota y frecuencia).
+	- I3: Filter Morph.
+	- I4: Reverb Mix.
+	- I5: Delay Mix.
+- OLED con paginas ciclicas (I0..I5), centradas para lectura rapida.
+- En cada pagina se muestra estado de variacion del parametro mostrado: W* activa, W- inactiva.
 - Escaneo de MUX por canal (no barrido completo por ciclo) para reducir acople entre controles.
 - Lectura ADC con mayor tiempo de asentamiento para reducir arrastre entre canales del CD4067.
 - Refresco OLED desacoplado y menos frecuente para bajar ruido inducido por trafico I2C.
@@ -43,9 +81,9 @@ flowchart LR
 
 | Canal MUX | Funcion | Rango |
 |---|---|---|
-| I0 | Pitch LFO Rate | 0.05 .. 12 Hz |
-| I1 | Pitch LFO Depth | 0 .. 520 Hz |
-| I2 | Master Gain | 0 .. 100% |
+| I0 | Master Gain | 0 .. 100% |
+| I1 | Velocidad de sirena | 12 .. 300 BPM |
+| I2 | Pitch base (nota central) | 110 .. 880 Hz |
 | I3 | Filter Morph | -1 (LP) .. 0 .. +1 (HP) |
 | I4 | Reverb Mix | 0 .. 100% |
 | I5 | Delay Mix | 0 .. 100% |
@@ -120,9 +158,9 @@ Conexion de cada potenciometro:
 
 Canales usados:
 
-- I0/C0 -> LFO Rate.
-- I1/C1 -> LFO Depth.
-- I2/C2 -> Master Gain.
+- I0/C0 -> Master Gain.
+- I1/C1 -> Velocidad de sirena (BPM).
+- I2/C2 -> Pitch base (nota central).
 - I3/C3 -> Filter Morph.
 - I4/C4 -> Reverb Mix.
 - I5/C5 -> Delay Mix.
@@ -145,8 +183,11 @@ Conexion electrica (INPUT_PULLUP en firmware):
 
 Funcion en firmware:
 
-- Boton rojo (GPIO27): cambia la forma de onda de la sirena en este orden: ORIG -> SIN -> SQR -> TRI -> SAW.
-- Boton blanco (GPIO13): sin funcion activa en el modo actual.
+- Boton rojo (GPIO27), toque corto: cambia la forma de onda base de la sirena en este orden: ORIG -> SIN -> SQR -> TRI -> SAW.
+- Boton rojo (GPIO27), pulsacion larga: cambia de pagina/parametro (I0 -> I1 -> I2 -> I3 -> I4 -> I5 -> I0).
+- Boton blanco (GPIO13), toque corto: recorre la forma de onda de variacion del parametro de la pagina actual.
+- Boton blanco (GPIO13), pulsacion larga: selecciona o deselecciona esa variacion para el parametro de la pagina actual.
+- La variacion es independiente por parametro: cada pagina conserva su propia forma de variacion y estado W*/W-.
 
 ## 4. Resumen Rapido De Pines ESP32
 
@@ -156,7 +197,7 @@ Funcion en firmware:
 | MUX control | GPIO16 (S0), GPIO17 (S1), GPIO19 (S2), GPIO18 (S3) |
 | MUX lectura ADC | GPIO35 (SIG/OUT) |
 | OLED I2C | GPIO21 (SDA), GPIO23 (SCL) |
-| Botones | GPIO27 (Wave), GPIO13 (sin funcion activa) |
+| Botones | GPIO27 (Wave base + cambio de pagina), GPIO13 (Wave variacion + seleccion por pagina) |
 
 ## 5. Build Y Carga
 
@@ -171,6 +212,8 @@ Subir firmware:
 ```powershell
 pio run -t upload --upload-port COM3
 ```
+
+Tambien puede ser necesario usar COM4 segun la enumeracion actual.
 
 Monitor serie:
 
