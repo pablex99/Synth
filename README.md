@@ -17,11 +17,11 @@ Firmware simplificado de sirena con un solo LFO de pitch y control por MUX, boto
 
 Arquitectura de senal actual:
 
-![Arquitectura de senal](docs/img/signal-architecture.svg)
+![Arquitectura de senal](docs/img/arquitectura.png)
 
 Diagrama de panel de control (vista frontal):
 
-![Panel de control](docs/img/control-panel-layout.svg)
+![Panel de control](docs/img/control.png)
 
 ## 1. Estado Del Firmware
 
