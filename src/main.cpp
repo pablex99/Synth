@@ -62,21 +62,24 @@ constexpr float VCO_TONE_ALPHA = 0.18f;
 constexpr float OUTPUT_DRIVE = 1.20f;
 
 // Delay dub fijo.
-constexpr float DELAY_TIME_MS = 5000.0f;
+constexpr float DELAY_TIME_MS = 7000.0f;
 constexpr float DELAY_TIME_MIN_MS = 0.0f;
-constexpr int DELAY_SAMPLE_RATE = 7350;
+constexpr int DELAY_SAMPLE_RATE = 7000;
 constexpr int DELAY_BUFFER_SAMPLES = static_cast<int>(DELAY_SAMPLE_RATE * DELAY_TIME_MS / 1000.0f);
 constexpr float DELAY_FEEDBACK_MIN = 0.0f;
-constexpr float DELAY_FEEDBACK_MAX = 0.60f;
-constexpr float DELAY_MIX = 0.045f;
-constexpr float DELAY_WET_TRIM = 0.45f;
-constexpr float DELAY_FEEDBACK_DARKEN_ALPHA = 0.24f;
+constexpr float DELAY_FEEDBACK_MAX = 1.0f;
+constexpr float DELAY_MIX = 0.30f;
+constexpr float DELAY_WET_TRIM = 0.80f;
+constexpr float DELAY_FEEDBACK_DARKEN_ALPHA = 0.08f;
 
 // Limpieza de salida.
 constexpr float DC_BLOCK_R = 0.995f;
 constexpr float OUTPUT_LP_ALPHA = 0.08f;
 constexpr float FM_SLEW_ALPHA = 0.012f;
 constexpr float GATE_SMOOTH_ALPHA = 0.01f;
+constexpr float VCA_POT_MIN_NORM = 0.045f;
+constexpr float VCA_POT_MAX_NORM = 0.995f;
+constexpr float VCA_AUDIO_TAPER = 1.6f;
 
 float carrierPhase = 0.0f;
 float lfoPhase = 0.0f;
@@ -113,6 +116,7 @@ uint32_t lastControlMs = 0;
 uint8_t muxScanIndex = 0;
 bool autoMode = true;
 bool manualGateHeld = false;
+bool manualGateHeldPrev = false;
 float gateLevel = 1.0f;
 
 enum class LfoWaveform : uint8_t {
@@ -146,6 +150,14 @@ float clampf(float value, float minValue, float maxValue) {
 
 float mapLinear(float normalized, float minValue, float maxValue) {
   return minValue + clampf(normalized, 0.0f, 1.0f) * (maxValue - minValue);
+}
+
+// Convierte la lectura normalizada del pot de volumen al rango [0..1] util real,
+// compensando offset de hardware y aplicando una curva tipo audio-taper.
+float mapVcaPotToGain(float potNorm) {
+  float remapped = (potNorm - VCA_POT_MIN_NORM) / (VCA_POT_MAX_NORM - VCA_POT_MIN_NORM);
+  remapped = clampf(remapped, 0.0f, 1.0f);
+  return powf(remapped, VCA_AUDIO_TAPER);
 }
 
 float computeLfoValue(float phaseNorm, float phaseRad, LfoWaveform waveform) {
@@ -317,6 +329,19 @@ void loop() {
   }
   manualGateHeld = (blueStableState == LOW);
 
+  // En modo manual, al presionar el trigger reiniciamos fase para que cada disparo
+  // arranque desde el punto inicial predecible de cada forma de onda.
+  bool manualTriggerPressed = (!autoMode && manualGateHeld && !manualGateHeldPrev);
+  if (manualTriggerPressed) {
+    lfoPhase = 0.0f;
+    carrierPhase = 0.0f;
+    vcoToneState = 0.0f;
+    outputLpState = 0.0f;
+    dcBlockX1 = 0.0f;
+    dcBlockY1 = 0.0f;
+  }
+  manualGateHeldPrev = manualGateHeld;
+
   if (now - lastControlMs >= CONTROL_UPDATE_MS) {
     // Round-robin: 1 canal por tick para reducir actividad ADC instantanea y ruido.
     switch (muxScanIndex) {
@@ -348,7 +373,7 @@ void loop() {
   float targetVcoBaseNorm = potVcoBaseNorm;
   float targetFmDepthNorm = potFmDepthNorm;
   float targetLfoRateNorm = potLfoRateNorm;
-  float targetVcaLevel = potVcaLevel * VCA_LEVEL_MAX;
+  float targetVcaLevel = mapVcaPotToGain(potVcaLevel) * VCA_LEVEL_MAX;
   float targetDelayFeedbackNorm = potDelayFeedbackNorm;
   float targetGateLevel = (autoMode || manualGateHeld) ? 1.0f : 0.0f;
 
@@ -388,7 +413,7 @@ void loop() {
     vcoToneState += (rawSquare - vcoToneState) * VCO_TONE_ALPHA;
     float drySample = vcoToneState * OUTPUT_GAIN * gateLevel;
 
-    // Delay dub con tiempo variable por C0/S0 (0..5000 ms) y feedback por C6/S6.
+    // Delay dub con tiempo variable por C0/S0 (0..7000 ms) y feedback por C6/S6.
     float currentDelayMs = DELAY_TIME_MIN_MS + smoothedDelayTimeNorm * (DELAY_TIME_MS - DELAY_TIME_MIN_MS);
     float currentDelayFeedback = mapLinear(smoothedDelayFeedbackNorm, DELAY_FEEDBACK_MIN, DELAY_FEEDBACK_MAX);
     int currentDelaySamples = static_cast<int>(clampf(currentDelayMs * DELAY_SAMPLE_RATE / 1000.0f, 0.0f, static_cast<float>(DELAY_BUFFER_SAMPLES - 1)));
@@ -402,7 +427,7 @@ void loop() {
     }
     float wetSample = delayedSample * DELAY_WET_TRIM;
     float sample = drySample * (1.0f - DELAY_MIX) + wetSample * DELAY_MIX;
-    float feedbackInput = drySample + wetSample * currentDelayFeedback;
+    float feedbackInput = drySample + delayedSample * currentDelayFeedback;
     delayFeedbackFiltered += (feedbackInput - delayFeedbackFiltered) * DELAY_FEEDBACK_DARKEN_ALPHA;
 
     // Escritura del delay a tasa reducida para habilitar 5 s de retardo dentro de la RAM disponible.
