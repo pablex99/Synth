@@ -20,6 +20,7 @@ constexpr int MUX_S1_PIN = 17;
 constexpr int MUX_S2_PIN = 19;
 constexpr int MUX_S3_PIN = 18;
 constexpr uint8_t MUX_CH_DELAY_TIME = 0;      // C0/S0
+constexpr uint8_t MUX_CH_ENV_RELEASE = 1;     // I1/C1
 constexpr uint8_t MUX_CH_VCO_BASE = 2;        // I2/C2
 constexpr uint8_t MUX_CH_FM_DEPTH = 3;        // I3/C3
 constexpr uint8_t MUX_CH_LFO_RATE = 4;        // I4/C4
@@ -28,6 +29,7 @@ constexpr uint8_t MUX_CH_DELAY_FEEDBACK = 6;  // C6/S6
 constexpr int BTN_RED_PIN = 4;          // Rojo: cambia forma de onda del LFO
 constexpr int BTN_WHITE_PIN = 21;       // Blanco: alterna modo AUTO/MANUAL
 constexpr int BTN_BLUE_PIN = 22;        // Azul: compuerta manual (mantener)
+constexpr int BTN_GREEN_PIN = 23;       // Verde: cambia punto de inicio del LFO
 
 constexpr int SAMPLE_RATE = 44100;
 constexpr int BUFFER_SIZE = 256;
@@ -46,8 +48,8 @@ constexpr uint8_t MUX_DUMMY_READS = 2;
 constexpr uint8_t MUX_AVG_SAMPLES = 4;
 
 // Rangos ampliados de controles:
-// I4: 0.05..50 Hz, I3: -100..300 %, I2: 50..4000 Hz.
-constexpr float LFO_RATE_MIN_HZ = 0.05f;
+// I4: 0.0001..50 Hz, I3: -100..300 %, I2: 50..4000 Hz.
+constexpr float LFO_RATE_MIN_HZ = 0.0001f;
 constexpr float LFO_RATE_MAX_HZ = 50.0f;
 constexpr float VCO_BASE_MIN_HZ = 50.0f;
 constexpr float VCO_BASE_MAX_HZ = 4000.0f;
@@ -68,9 +70,17 @@ constexpr int DELAY_SAMPLE_RATE = 7000;
 constexpr int DELAY_BUFFER_SAMPLES = static_cast<int>(DELAY_SAMPLE_RATE * DELAY_TIME_MS / 1000.0f);
 constexpr float DELAY_FEEDBACK_MIN = 0.0f;
 constexpr float DELAY_FEEDBACK_MAX = 1.0f;
-constexpr float DELAY_MIX = 0.30f;
-constexpr float DELAY_WET_TRIM = 0.80f;
-constexpr float DELAY_FEEDBACK_DARKEN_ALPHA = 0.08f;
+constexpr float DELAY_MIX = 0.45f;
+constexpr float DELAY_WET_TRIM = 1.0f;
+constexpr float DELAY_FEEDBACK_DARKEN_ALPHA = 0.05f;
+
+// Envelope para trigger manual.
+constexpr float ENV_ATTACK_MS = 1.0f;
+constexpr float ENV_DECAY_MS = 10000.0f;
+constexpr float ENV_SUSTAIN_LEVEL = 1.0f;
+constexpr float ENV_SUSTAIN_MS = 10000.0f;
+constexpr float ENV_RELEASE_MIN_MS = 1.0f;
+constexpr float ENV_RELEASE_MAX_MS = 10000.0f;
 
 // Limpieza de salida.
 constexpr float DC_BLOCK_R = 0.995f;
@@ -95,18 +105,21 @@ int delayWritePhase = 0;
 
 // Estado de controles (I2, I3, I4, I5): valor crudo suavizado y normalizado [0..1].
 float muxRawSmoothDelayTime = 2048.0f;
+float muxRawSmoothEnvRelease = 2048.0f;
 float muxRawSmoothVcoBase = 2048.0f;
 float muxRawSmoothFmDepth = 2048.0f;
 float muxRawSmoothLfoRate = 2048.0f;
 float muxRawSmoothVcaLevel = 2048.0f;
 float muxRawSmoothDelayFeedback = 2048.0f;
 float potDelayTimeNorm = 0.5f;
+float potEnvReleaseNorm = 0.5f;
 float potVcoBaseNorm = 0.5f;
 float potFmDepthNorm = 0.5f;
 float potLfoRateNorm = 0.5f;
 float potVcaLevel = 0.5f;
 float potDelayFeedbackNorm = 0.3f;
 float smoothedDelayTimeNorm = 0.5f;
+float smoothedEnvReleaseNorm = 0.5f;
 float smoothedVcoBaseNorm = 0.5f;
 float smoothedFmDepthNorm = 0.5f;
 float smoothedLfoRateNorm = 0.5f;
@@ -115,9 +128,22 @@ float smoothedDelayFeedbackNorm = 0.3f;
 uint32_t lastControlMs = 0;
 uint8_t muxScanIndex = 0;
 bool autoMode = true;
+bool autoModePrev = true;
 bool manualGateHeld = false;
 bool manualGateHeldPrev = false;
 float gateLevel = 1.0f;
+
+enum class EnvelopeStage : uint8_t {
+  Idle = 0,
+  Attack = 1,
+  Decay = 2,
+  Sustain = 3,
+  Release = 4
+};
+
+EnvelopeStage envelopeStage = EnvelopeStage::Idle;
+float envelopeLevel = 0.0f;
+uint32_t envelopeSustainSamples = 0;
 
 enum class LfoWaveform : uint8_t {
   SawDown = 0,
@@ -127,7 +153,16 @@ enum class LfoWaveform : uint8_t {
   Count = 4
 };
 
+enum class LfoStartPoint : uint8_t {
+  ZeroRising = 0,
+  Peak = 1,
+  ZeroFalling = 2,
+  Trough = 3,
+  Count = 4
+};
+
 LfoWaveform lfoWaveform = LfoWaveform::SawDown;
+LfoStartPoint lfoStartPoint = LfoStartPoint::ZeroRising;
 bool redLastReading = HIGH;
 bool redStableState = HIGH;
 uint32_t redLastChangeMs = 0;
@@ -137,6 +172,9 @@ uint32_t whiteLastChangeMs = 0;
 bool blueLastReading = HIGH;
 bool blueStableState = HIGH;
 uint32_t blueLastChangeMs = 0;
+bool greenLastReading = HIGH;
+bool greenStableState = HIGH;
+uint32_t greenLastChangeMs = 0;
 
 float clampf(float value, float minValue, float maxValue) {
   if (value < minValue) {
@@ -171,6 +209,61 @@ float computeLfoValue(float phaseNorm, float phaseRad, LfoWaveform waveform) {
     case LfoWaveform::SawDown:
     default:
       return 1.0f - 2.0f * phaseNorm;
+  }
+}
+
+float getLfoStartPhaseNorm(LfoWaveform waveform, LfoStartPoint startPoint) {
+  constexpr float kNearOne = 0.9999f;
+  switch (waveform) {
+    case LfoWaveform::Sine:
+      switch (startPoint) {
+        case LfoStartPoint::ZeroRising:
+          return 0.0f;
+        case LfoStartPoint::Peak:
+          return 0.25f;
+        case LfoStartPoint::ZeroFalling:
+          return 0.5f;
+        case LfoStartPoint::Trough:
+        default:
+          return 0.75f;
+      }
+    case LfoWaveform::SawUp:
+      switch (startPoint) {
+        case LfoStartPoint::ZeroRising:
+          return 0.5f;
+        case LfoStartPoint::Peak:
+          return kNearOne;
+        case LfoStartPoint::ZeroFalling:
+          return 0.5f;
+        case LfoStartPoint::Trough:
+        default:
+          return 0.0f;
+      }
+    case LfoWaveform::Square:
+      switch (startPoint) {
+        case LfoStartPoint::ZeroRising:
+          return 0.0f;
+        case LfoStartPoint::Peak:
+          return 0.25f;
+        case LfoStartPoint::ZeroFalling:
+          return 0.5f;
+        case LfoStartPoint::Trough:
+        default:
+          return 0.75f;
+      }
+    case LfoWaveform::SawDown:
+    default:
+      switch (startPoint) {
+        case LfoStartPoint::ZeroRising:
+          return 0.5f;
+        case LfoStartPoint::Peak:
+          return 0.0f;
+        case LfoStartPoint::ZeroFalling:
+          return 0.5f;
+        case LfoStartPoint::Trough:
+        default:
+          return kNearOne;
+      }
   }
 }
 
@@ -262,8 +355,10 @@ void setup() {
   pinMode(BTN_RED_PIN, INPUT_PULLUP);
   pinMode(BTN_WHITE_PIN, INPUT_PULLUP);
   pinMode(BTN_BLUE_PIN, INPUT_PULLUP);
+  pinMode(BTN_GREEN_PIN, INPUT_PULLUP);
 
   muxRawSmoothDelayTime = static_cast<float>(readMuxRaw(MUX_CH_DELAY_TIME));
+  muxRawSmoothEnvRelease = static_cast<float>(readMuxRaw(MUX_CH_ENV_RELEASE));
   muxRawSmoothVcoBase = static_cast<float>(readMuxRaw(MUX_CH_VCO_BASE));
   muxRawSmoothFmDepth = static_cast<float>(readMuxRaw(MUX_CH_FM_DEPTH));
   muxRawSmoothLfoRate = static_cast<float>(readMuxRaw(MUX_CH_LFO_RATE));
@@ -271,6 +366,7 @@ void setup() {
   muxRawSmoothDelayFeedback = static_cast<float>(readMuxRaw(MUX_CH_DELAY_FEEDBACK));
 
   potDelayTimeNorm = clampf(muxRawSmoothDelayTime / 4095.0f, 0.0f, 1.0f);
+  potEnvReleaseNorm = clampf(muxRawSmoothEnvRelease / 4095.0f, 0.0f, 1.0f);
   potVcoBaseNorm = clampf(muxRawSmoothVcoBase / 4095.0f, 0.0f, 1.0f);
   potFmDepthNorm = clampf(muxRawSmoothFmDepth / 4095.0f, 0.0f, 1.0f);
   potLfoRateNorm = clampf(muxRawSmoothLfoRate / 4095.0f, 0.0f, 1.0f);
@@ -278,6 +374,7 @@ void setup() {
   potDelayFeedbackNorm = clampf(muxRawSmoothDelayFeedback / 4095.0f, 0.0f, 1.0f);
 
   smoothedDelayTimeNorm = potDelayTimeNorm;
+  smoothedEnvReleaseNorm = potEnvReleaseNorm;
   smoothedVcoBaseNorm = potVcoBaseNorm;
   smoothedFmDepthNorm = potFmDepthNorm;
   smoothedLfoRateNorm = potLfoRateNorm;
@@ -319,6 +416,22 @@ void loop() {
     }
   }
 
+  if (autoMode != autoModePrev) {
+    if (autoMode) {
+      envelopeStage = EnvelopeStage::Sustain;
+      envelopeLevel = 1.0f;
+      envelopeSustainSamples = 0;
+    } else {
+      // Al salir de AUTO, no cortar en seco: aplicar release segun I1/C1.
+      envelopeStage = EnvelopeStage::Release;
+      if (envelopeLevel < 0.001f) {
+        envelopeLevel = 1.0f;
+      }
+      envelopeSustainSamples = 0;
+    }
+    autoModePrev = autoMode;
+  }
+
   bool blueReading = digitalRead(BTN_BLUE_PIN);
   if (blueReading != blueLastReading) {
     blueLastReading = blueReading;
@@ -329,16 +442,36 @@ void loop() {
   }
   manualGateHeld = (blueStableState == LOW);
 
+  bool greenReading = digitalRead(BTN_GREEN_PIN);
+  if (greenReading != greenLastReading) {
+    greenLastReading = greenReading;
+    greenLastChangeMs = now;
+  }
+  if ((now - greenLastChangeMs) > DEBOUNCE_MS && greenReading != greenStableState) {
+    greenStableState = greenReading;
+    if (greenStableState == LOW) {
+      lfoStartPoint = static_cast<LfoStartPoint>((static_cast<uint8_t>(lfoStartPoint) + 1) % static_cast<uint8_t>(LfoStartPoint::Count));
+    }
+  }
+
   // En modo manual, al presionar el trigger reiniciamos fase para que cada disparo
   // arranque desde el punto inicial predecible de cada forma de onda.
   bool manualTriggerPressed = (!autoMode && manualGateHeld && !manualGateHeldPrev);
+  bool manualTriggerReleased = (!autoMode && !manualGateHeld && manualGateHeldPrev);
   if (manualTriggerPressed) {
-    lfoPhase = 0.0f;
+    float startPhaseNorm = getLfoStartPhaseNorm(lfoWaveform, lfoStartPoint);
+    lfoPhase = startPhaseNorm * TWO_PI;
     carrierPhase = 0.0f;
     vcoToneState = 0.0f;
     outputLpState = 0.0f;
     dcBlockX1 = 0.0f;
     dcBlockY1 = 0.0f;
+    envelopeStage = EnvelopeStage::Attack;
+    envelopeLevel = 0.0f;
+    envelopeSustainSamples = 0;
+  }
+  if (manualTriggerReleased && envelopeStage != EnvelopeStage::Idle) {
+    envelopeStage = EnvelopeStage::Release;
   }
   manualGateHeldPrev = manualGateHeld;
 
@@ -349,42 +482,93 @@ void loop() {
         potDelayTimeNorm = readSmoothedNormalized(MUX_CH_DELAY_TIME, muxRawSmoothDelayTime);
         break;
       case 1:
-        potVcoBaseNorm = readSmoothedNormalized(MUX_CH_VCO_BASE, muxRawSmoothVcoBase);
+        potEnvReleaseNorm = readSmoothedNormalized(MUX_CH_ENV_RELEASE, muxRawSmoothEnvRelease);
         break;
       case 2:
-        potFmDepthNorm = readSmoothedNormalized(MUX_CH_FM_DEPTH, muxRawSmoothFmDepth);
+        potVcoBaseNorm = readSmoothedNormalized(MUX_CH_VCO_BASE, muxRawSmoothVcoBase);
         break;
       case 3:
-        potLfoRateNorm = readSmoothedNormalized(MUX_CH_LFO_RATE, muxRawSmoothLfoRate);
+        potFmDepthNorm = readSmoothedNormalized(MUX_CH_FM_DEPTH, muxRawSmoothFmDepth);
         break;
       case 4:
-        potVcaLevel = readSmoothedNormalized(MUX_CH_VCA_LEVEL, muxRawSmoothVcaLevel);
+        potLfoRateNorm = readSmoothedNormalized(MUX_CH_LFO_RATE, muxRawSmoothLfoRate);
         break;
       case 5:
+        potVcaLevel = readSmoothedNormalized(MUX_CH_VCA_LEVEL, muxRawSmoothVcaLevel);
+        break;
+      case 6:
       default:
         potDelayFeedbackNorm = readSmoothedNormalized(MUX_CH_DELAY_FEEDBACK, muxRawSmoothDelayFeedback);
         break;
     }
-    muxScanIndex = (muxScanIndex + 1) % 6;
+    muxScanIndex = (muxScanIndex + 1) % 7;
     lastControlMs = now;
   }
 
   float targetDelayTimeNorm = potDelayTimeNorm;
+  float targetEnvReleaseNorm = potEnvReleaseNorm;
   float targetVcoBaseNorm = potVcoBaseNorm;
   float targetFmDepthNorm = potFmDepthNorm;
   float targetLfoRateNorm = potLfoRateNorm;
   float targetVcaLevel = mapVcaPotToGain(potVcaLevel) * VCA_LEVEL_MAX;
   float targetDelayFeedbackNorm = potDelayFeedbackNorm;
-  float targetGateLevel = (autoMode || manualGateHeld) ? 1.0f : 0.0f;
+  float targetGateLevel = (autoMode || envelopeStage != EnvelopeStage::Idle) ? 1.0f : 0.0f;
 
   for (int i = 0; i < BUFFER_SIZE; ++i) {
     smoothedDelayTimeNorm += (targetDelayTimeNorm - smoothedDelayTimeNorm) * PARAM_SMOOTH_ALPHA;
+    smoothedEnvReleaseNorm += (targetEnvReleaseNorm - smoothedEnvReleaseNorm) * PARAM_SMOOTH_ALPHA;
     smoothedVcoBaseNorm += (targetVcoBaseNorm - smoothedVcoBaseNorm) * PARAM_SMOOTH_ALPHA;
     smoothedFmDepthNorm += (targetFmDepthNorm - smoothedFmDepthNorm) * PARAM_SMOOTH_ALPHA;
     smoothedLfoRateNorm += (targetLfoRateNorm - smoothedLfoRateNorm) * PARAM_SMOOTH_ALPHA;
     smoothedVcaLevel += (targetVcaLevel - smoothedVcaLevel) * PARAM_SMOOTH_ALPHA;
     smoothedDelayFeedbackNorm += (targetDelayFeedbackNorm - smoothedDelayFeedbackNorm) * PARAM_SMOOTH_ALPHA;
     gateLevel += (targetGateLevel - gateLevel) * GATE_SMOOTH_ALPHA;
+
+    // Envelope para modo manual: al presionar trigger abre a ganancia plena y
+    // al soltar cae segun release (I1/C1). AUTO queda siempre a nivel 1.
+    if (autoMode) {
+      envelopeLevel = 1.0f;
+      envelopeStage = EnvelopeStage::Sustain;
+      envelopeSustainSamples = 0;
+    } else {
+      float attackSamples = fmaxf(ENV_ATTACK_MS * SAMPLE_RATE / 1000.0f, 1.0f);
+      float decaySamples = fmaxf(ENV_DECAY_MS * SAMPLE_RATE / 1000.0f, 1.0f);
+      float releaseMs = mapLinear(smoothedEnvReleaseNorm, ENV_RELEASE_MIN_MS, ENV_RELEASE_MAX_MS);
+      float releaseSamples = fmaxf(releaseMs * SAMPLE_RATE / 1000.0f, 1.0f);
+
+      switch (envelopeStage) {
+        case EnvelopeStage::Attack:
+          envelopeLevel += 1.0f / attackSamples;
+          if (envelopeLevel >= 1.0f) {
+            envelopeLevel = 1.0f;
+            envelopeStage = EnvelopeStage::Decay;
+          }
+          break;
+        case EnvelopeStage::Decay:
+          envelopeLevel += (ENV_SUSTAIN_LEVEL - 1.0f) / decaySamples;
+          if (envelopeLevel <= ENV_SUSTAIN_LEVEL) {
+            envelopeLevel = ENV_SUSTAIN_LEVEL;
+            envelopeStage = EnvelopeStage::Sustain;
+            envelopeSustainSamples = 0;
+          }
+          break;
+        case EnvelopeStage::Sustain:
+          envelopeLevel = ENV_SUSTAIN_LEVEL;
+          break;
+        case EnvelopeStage::Release:
+          envelopeLevel -= 1.0f / releaseSamples;
+          if (envelopeLevel <= 0.0f) {
+            envelopeLevel = 0.0f;
+            envelopeStage = EnvelopeStage::Idle;
+          }
+          break;
+        case EnvelopeStage::Idle:
+        default:
+          envelopeLevel = 0.0f;
+          break;
+      }
+      envelopeLevel = clampf(envelopeLevel, 0.0f, 1.0f);
+    }
 
     float currentVcoBaseHz = mapLinear(smoothedVcoBaseNorm, VCO_BASE_MIN_HZ, VCO_BASE_MAX_HZ);
     float currentLfoRateHz = mapLinear(smoothedLfoRateNorm, LFO_RATE_MIN_HZ, LFO_RATE_MAX_HZ);
@@ -411,7 +595,7 @@ void loop() {
     }
     rawSquare -= polyBlep(fallPhase, dt);
     vcoToneState += (rawSquare - vcoToneState) * VCO_TONE_ALPHA;
-    float drySample = vcoToneState * OUTPUT_GAIN * gateLevel;
+    float drySample = vcoToneState * OUTPUT_GAIN * gateLevel * envelopeLevel;
 
     // Delay dub con tiempo variable por C0/S0 (0..7000 ms) y feedback por C6/S6.
     float currentDelayMs = DELAY_TIME_MIN_MS + smoothedDelayTimeNorm * (DELAY_TIME_MS - DELAY_TIME_MIN_MS);
