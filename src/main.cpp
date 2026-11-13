@@ -1,6 +1,8 @@
 #include <Arduino.h>
 #include <driver/i2s.h>
 #include <math.h>
+#include <SD.h>
+#include <SPI.h>
 
 // Prueba de audio: sirena dub estilo patch modular (LFO diente de sierra -> FM de VCO
 // cuadrado -> VCA -> delay), sonando siempre. Controles: I4 = frecuencia del LFO,
@@ -29,17 +31,37 @@ constexpr uint8_t MUX_CH_DELAY_FEEDBACK = 6;  // C6/S6
 constexpr int BTN_RED_PIN = 4;          // Rojo: cambia forma de onda del LFO
 constexpr int BTN_WHITE_PIN = 21;       // Blanco: alterna modo AUTO/MANUAL
 constexpr int BTN_BLUE_PIN = 22;        // Azul: compuerta manual (mantener)
-constexpr int BTN_GREEN_PIN = 23;       // Verde: cambia punto de inicio del LFO
+constexpr int BTN_GREEN_PIN = 23;       // Verde: dispara reproduccion WAV desde SD
+
+constexpr int SD_CS_PIN = 33;
+constexpr int SD_SCK_PIN = 25;
+constexpr int SD_MOSI_PIN = 26;
+constexpr int SD_MISO_PIN = 34;
+constexpr uint32_t SD_SPI_HZ = 4000000;
 
 constexpr int SAMPLE_RATE = 44100;
-constexpr int BUFFER_SIZE = 256;
-constexpr uint32_t CONTROL_UPDATE_MS = 10;
-constexpr uint32_t DEBOUNCE_MS = 40;
+constexpr int BUFFER_SIZE = 512;
+constexpr uint32_t CONTROL_UPDATE_MS = 20;
+constexpr uint32_t DEBOUNCE_MS = 60;
+constexpr uint32_t BLUE_LONG_PRESS_MS = 2000;
+constexpr uint16_t SAMPLE_SD_BLOCK_BYTES = 1536;
+constexpr uint16_t SAMPLE_RING_CAPACITY = 1024;
+constexpr uint16_t SAMPLE_RING_LOW_WATER = 512;
+constexpr uint16_t SAMPLE_PREROLL_SAMPLES = 256;
+constexpr float SAMPLE_MIX_GAIN = 0.5f;
+constexpr float SAMPLE_FADE_MS = 10.0f;
+constexpr float SAMPLE_FADE_STEP = 1.0f / ((SAMPLE_FADE_MS * SAMPLE_RATE / 1000.0f) > 1.0f ? (SAMPLE_FADE_MS * SAMPLE_RATE / 1000.0f) : 1.0f);
+constexpr float SAMPLE_OUTPUT_SMOOTH_ALPHA = 0.65f;
+constexpr float SAMPLE_UNDERRUN_DECAY = 0.98f;
+constexpr float SAMPLE_OUTPUT_SLEW_MAX = 0.08f;
+constexpr float SAMPLE_DC_BLOCK_R = 0.995f;
+constexpr float SAMPLE_POST_LP_ALPHA = 1.0f;
+constexpr uint32_t BUTTON_CONTROL_SUPPRESS_MS = 140;
 
 // Filtros de lectura/control para minimizar zipper noise.
 constexpr float POT_SMOOTH_ALPHA = 0.08f;
 constexpr float PARAM_SMOOTH_ALPHA = 0.0013f;
-constexpr float POT_NORMALIZED_DEADBAND = 0.003f;
+constexpr float POT_NORMALIZED_DEADBAND = 0.007f;
 
 // Endurecimiento de lectura MUX/ADC para reducir ruido de conversion y arrastre.
 constexpr uint16_t MUX_SETTLE_US = 300;
@@ -175,6 +197,43 @@ uint32_t blueLastChangeMs = 0;
 bool greenLastReading = HIGH;
 bool greenStableState = HIGH;
 uint32_t greenLastChangeMs = 0;
+uint32_t bluePressedStartMs = 0;
+bool blueLongPressLatched = false;
+
+bool sdInitialized = false;
+File samplePlaybackFile;
+bool samplePlaybackActive = false;
+uint8_t samplePlaybackChannels = 0;
+uint16_t samplePlaybackBits = 0;
+uint32_t samplePlaybackRateHz = 0;
+uint32_t samplePlaybackDataBytesRemaining = 0;
+String samplePlaybackPath;
+String samplePreferredPath;
+bool sampleMetaReady = false;
+uint8_t sampleMetaChannels = 0;
+uint16_t sampleMetaBits = 0;
+uint32_t sampleMetaRateHz = 0;
+uint32_t sampleMetaDataOffset = 0;
+uint32_t sampleMetaDataBytes = 0;
+uint8_t samplePlaybackReadBuffer[SAMPLE_SD_BLOCK_BYTES] = {};
+uint16_t samplePlaybackReadPos = 0;
+uint16_t samplePlaybackReadValid = 0;
+volatile uint32_t sampleRingReadIndex = 0;
+volatile uint32_t sampleRingWriteIndex = 0;
+int16_t sampleRingBuffer[SAMPLE_RING_CAPACITY] = {};
+volatile bool samplePlaybackFeeding = false;
+float samplePlaybackFadeGain = 0.0f;
+float samplePlaybackLastValue = 0.0f;
+float sampleDcX1 = 0.0f;
+float sampleDcY1 = 0.0f;
+float samplePostLp = 0.0f;
+TaskHandle_t sampleStreamTaskHandle = nullptr;
+volatile bool sampleStartRequest = false;
+volatile bool sampleOutputEnabled = false;
+uint32_t suppressControlUntilMs = 0;
+
+bool initSdCard();
+String findFirstWavPath();
 
 float clampf(float value, float minValue, float maxValue) {
   if (value < minValue) {
@@ -317,6 +376,473 @@ float readSmoothedNormalized(uint8_t channel, float& rawSmooth) {
   return normalized;
 }
 
+uint32_t readLE32(File &f) {
+  uint8_t b[4] = {0, 0, 0, 0};
+  if (f.read(b, 4) != 4) {
+    return 0;
+  }
+  return static_cast<uint32_t>(b[0]) |
+         (static_cast<uint32_t>(b[1]) << 8) |
+         (static_cast<uint32_t>(b[2]) << 16) |
+         (static_cast<uint32_t>(b[3]) << 24);
+}
+
+uint16_t readLE16(File &f) {
+  uint8_t b[2] = {0, 0};
+  if (f.read(b, 2) != 2) {
+    return 0;
+  }
+  return static_cast<uint16_t>(b[0]) | (static_cast<uint16_t>(b[1]) << 8);
+}
+
+bool parseWavHeader(File &f, uint8_t &channels, uint32_t &rateHz, uint16_t &bitsPerSample, uint32_t &dataBytes) {
+  channels = 0;
+  rateHz = 0;
+  bitsPerSample = 0;
+  dataBytes = 0;
+
+  char riff[4];
+  if (f.read(reinterpret_cast<uint8_t *>(riff), 4) != 4 || strncmp(riff, "RIFF", 4) != 0) {
+    return false;
+  }
+
+  (void)readLE32(f);
+
+  char wave[4];
+  if (f.read(reinterpret_cast<uint8_t *>(wave), 4) != 4 || strncmp(wave, "WAVE", 4) != 0) {
+    return false;
+  }
+
+  bool gotFmt = false;
+  bool gotData = false;
+  uint16_t audioFormat = 0;
+
+  while (f.available()) {
+    char chunkId[4];
+    if (f.read(reinterpret_cast<uint8_t *>(chunkId), 4) != 4) {
+      break;
+    }
+
+    uint32_t chunkSize = readLE32(f);
+    uint32_t dataStart = f.position();
+
+    if (strncmp(chunkId, "fmt ", 4) == 0) {
+      if (chunkSize < 16) {
+        return false;
+      }
+      audioFormat = readLE16(f);
+      channels = static_cast<uint8_t>(readLE16(f));
+      rateHz = readLE32(f);
+      (void)readLE32(f);
+      (void)readLE16(f);
+      bitsPerSample = readLE16(f);
+      gotFmt = true;
+    } else if (strncmp(chunkId, "data", 4) == 0) {
+      dataBytes = chunkSize;
+      gotData = true;
+      break;
+    }
+
+    uint32_t nextPos = dataStart + chunkSize + (chunkSize & 0x01);
+    f.seek(nextPos);
+  }
+
+  bool pcmClassic = (audioFormat == 1);
+  bool pcmExtensible = (audioFormat == 0xFFFE);
+
+  return gotFmt && gotData && (pcmClassic || pcmExtensible) &&
+         ((channels == 1) || (channels == 2)) && (bitsPerSample == 16);
+}
+
+bool prepareSampleMetadata() {
+  if (!sdInitialized && !initSdCard()) {
+    return false;
+  }
+  sdInitialized = true;
+
+  String selectedPath = samplePreferredPath;
+  if (selectedPath.length() == 0 || !SD.exists(selectedPath)) {
+    selectedPath = findFirstWavPath();
+    samplePreferredPath = selectedPath;
+  }
+  if (selectedPath.length() == 0) {
+    sampleMetaReady = false;
+    return false;
+  }
+
+  File f = SD.open(selectedPath, FILE_READ);
+  if (!f) {
+    sampleMetaReady = false;
+    return false;
+  }
+
+  uint8_t channels = 0;
+  uint32_t rateHz = 0;
+  uint16_t bitsPerSample = 0;
+  uint32_t dataBytes = 0;
+  bool valid = parseWavHeader(f, channels, rateHz, bitsPerSample, dataBytes);
+  uint32_t dataOffset = static_cast<uint32_t>(f.position());
+  f.close();
+
+  if (!valid || bitsPerSample != 16 || (channels != 1 && channels != 2) || rateHz != static_cast<uint32_t>(SAMPLE_RATE)) {
+    sampleMetaReady = false;
+    return false;
+  }
+
+  samplePreferredPath = selectedPath;
+  sampleMetaChannels = channels;
+  sampleMetaBits = bitsPerSample;
+  sampleMetaRateHz = rateHz;
+  sampleMetaDataOffset = dataOffset;
+  sampleMetaDataBytes = dataBytes;
+  sampleMetaReady = true;
+  return true;
+}
+
+bool hasWavExtension(const String &name) {
+  String lower = name;
+  lower.toLowerCase();
+  return lower.endsWith(".wav");
+}
+
+String findFirstWavPath() {
+  File root = SD.open("/");
+  if (!root || !root.isDirectory()) {
+    if (root) {
+      root.close();
+    }
+    return "";
+  }
+
+  String selectedPath;
+  while (true) {
+    File entry = root.openNextFile();
+    if (!entry) {
+      break;
+    }
+    if (!entry.isDirectory()) {
+      String name = String(entry.name());
+      if (hasWavExtension(name)) {
+        selectedPath = name.startsWith("/") ? name : ("/" + name);
+        entry.close();
+        break;
+      }
+    }
+    entry.close();
+  }
+  root.close();
+  return selectedPath;
+}
+
+bool initSdCard() {
+  SPI.begin(SD_SCK_PIN, SD_MISO_PIN, SD_MOSI_PIN, SD_CS_PIN);
+  pinMode(SD_CS_PIN, OUTPUT);
+  digitalWrite(SD_CS_PIN, HIGH);
+  if (!SD.begin(SD_CS_PIN, SPI, SD_SPI_HZ)) {
+    Serial.println("SD init failed");
+    return false;
+  }
+  return true;
+}
+
+void stopSamplePlayback() {
+  if (samplePlaybackFile) {
+    samplePlaybackFile.close();
+  }
+  samplePlaybackActive = false;
+  samplePlaybackFeeding = false;
+  samplePlaybackChannels = 0;
+  samplePlaybackBits = 0;
+  samplePlaybackRateHz = 0;
+  samplePlaybackDataBytesRemaining = 0;
+  samplePlaybackPath = "";
+  samplePlaybackReadPos = 0;
+  samplePlaybackReadValid = 0;
+  sampleRingReadIndex = 0;
+  sampleRingWriteIndex = 0;
+  samplePlaybackFadeGain = 0.0f;
+  samplePlaybackLastValue = 0.0f;
+  sampleDcX1 = 0.0f;
+  sampleDcY1 = 0.0f;
+  samplePostLp = 0.0f;
+  sampleOutputEnabled = false;
+}
+
+uint32_t sampleRingAvailable() {
+  uint32_t write = sampleRingWriteIndex;
+  uint32_t read = sampleRingReadIndex;
+  return write - read;
+}
+
+uint32_t sampleRingFree() {
+  return static_cast<uint32_t>(SAMPLE_RING_CAPACITY) - sampleRingAvailable();
+}
+
+bool sampleRingPush(int16_t value) {
+  if (sampleRingFree() == 0) {
+    return false;
+  }
+  uint32_t write = sampleRingWriteIndex;
+  sampleRingBuffer[write & (SAMPLE_RING_CAPACITY - 1)] = value;
+  sampleRingWriteIndex = write + 1;
+  return true;
+}
+
+bool sampleRingPop(int16_t &value) {
+  if (sampleRingAvailable() == 0) {
+    return false;
+  }
+  uint32_t read = sampleRingReadIndex;
+  value = sampleRingBuffer[read & (SAMPLE_RING_CAPACITY - 1)];
+  sampleRingReadIndex = read + 1;
+  return true;
+}
+
+bool refillSamplePlaybackBuffer() {
+  if (!samplePlaybackActive || !samplePlaybackFile || samplePlaybackDataBytesRemaining == 0) {
+    samplePlaybackReadPos = 0;
+    samplePlaybackReadValid = 0;
+    return false;
+  }
+
+  uint32_t pending = samplePlaybackDataBytesRemaining;
+  size_t bytesToRead = static_cast<size_t>((pending > SAMPLE_SD_BLOCK_BYTES) ? SAMPLE_SD_BLOCK_BYTES : pending);
+  size_t bytesRead = samplePlaybackFile.read(samplePlaybackReadBuffer, bytesToRead);
+  samplePlaybackReadPos = 0;
+  samplePlaybackReadValid = static_cast<uint16_t>(bytesRead);
+
+  if (bytesRead == 0) {
+    stopSamplePlayback();
+    return false;
+  }
+  return true;
+}
+
+bool readSamplePlaybackBytes(uint8_t *dst, uint8_t count) {
+  for (uint8_t i = 0; i < count; ++i) {
+    if (samplePlaybackReadPos >= samplePlaybackReadValid) {
+      if (!refillSamplePlaybackBuffer()) {
+        return false;
+      }
+    }
+    dst[i] = samplePlaybackReadBuffer[samplePlaybackReadPos++];
+  }
+  return true;
+}
+
+bool startSamplePlaybackFromSd() {
+  if (!sdInitialized && !initSdCard()) {
+    return false;
+  }
+  sdInitialized = true;
+
+  if (samplePlaybackActive) {
+    return true;
+  }
+
+  if (!sampleMetaReady) {
+    if (!prepareSampleMetadata()) {
+      return false;
+    }
+  }
+
+  if (samplePreferredPath.length() == 0 || !SD.exists(samplePreferredPath)) {
+    sampleMetaReady = false;
+    if (!prepareSampleMetadata()) {
+      return false;
+    }
+  }
+
+  stopSamplePlayback();
+
+  File f = SD.open(samplePreferredPath, FILE_READ);
+  if (!f) {
+    sampleMetaReady = false;
+    return false;
+  }
+
+  if (!f.seek(sampleMetaDataOffset)) {
+    f.close();
+    sampleMetaReady = false;
+    return false;
+  }
+
+  samplePlaybackFile = f;
+  samplePlaybackChannels = sampleMetaChannels;
+  samplePlaybackBits = sampleMetaBits;
+  samplePlaybackRateHz = sampleMetaRateHz;
+  samplePlaybackDataBytesRemaining = sampleMetaDataBytes;
+  samplePlaybackPath = samplePreferredPath;
+  samplePlaybackReadPos = 0;
+  samplePlaybackReadValid = 0;
+  sampleRingReadIndex = 0;
+  sampleRingWriteIndex = 0;
+  samplePlaybackFadeGain = 0.0f;
+  samplePlaybackLastValue = 0.0f;
+  sampleDcX1 = 0.0f;
+  sampleDcY1 = 0.0f;
+  samplePostLp = 0.0f;
+  sampleOutputEnabled = false;
+  samplePlaybackActive = true;
+  samplePlaybackFeeding = true;
+  return true;
+}
+
+bool decodeNextSampleFromFile(int16_t &monoPcm) {
+  if (!samplePlaybackFeeding || !samplePlaybackFile) {
+    return false;
+  }
+  if (samplePlaybackDataBytesRemaining == 0) {
+    samplePlaybackFeeding = false;
+    if (samplePlaybackFile) {
+      samplePlaybackFile.close();
+    }
+    return false;
+  }
+
+  if (samplePlaybackChannels == 1) {
+    if (samplePlaybackDataBytesRemaining < 2) {
+      samplePlaybackFeeding = false;
+      if (samplePlaybackFile) {
+        samplePlaybackFile.close();
+      }
+      return false;
+    }
+    uint8_t monoBytes[2] = {0, 0};
+    if (!readSamplePlaybackBytes(monoBytes, 2)) {
+      samplePlaybackFeeding = false;
+      if (samplePlaybackFile) {
+        samplePlaybackFile.close();
+      }
+      return false;
+    }
+    monoPcm = static_cast<int16_t>(static_cast<uint16_t>(monoBytes[0]) |
+                                   (static_cast<uint16_t>(monoBytes[1]) << 8));
+    samplePlaybackDataBytesRemaining -= 2;
+  } else {
+    if (samplePlaybackDataBytesRemaining < 4) {
+      samplePlaybackFeeding = false;
+      if (samplePlaybackFile) {
+        samplePlaybackFile.close();
+      }
+      return false;
+    }
+    uint8_t stereoBytes[4] = {0, 0, 0, 0};
+    if (!readSamplePlaybackBytes(stereoBytes, 4)) {
+      samplePlaybackFeeding = false;
+      if (samplePlaybackFile) {
+        samplePlaybackFile.close();
+      }
+      return false;
+    }
+    int16_t left = static_cast<int16_t>(static_cast<uint16_t>(stereoBytes[0]) |
+                                        (static_cast<uint16_t>(stereoBytes[1]) << 8));
+    int16_t right = static_cast<int16_t>(static_cast<uint16_t>(stereoBytes[2]) |
+                                         (static_cast<uint16_t>(stereoBytes[3]) << 8));
+    samplePlaybackDataBytesRemaining -= 4;
+    monoPcm = static_cast<int16_t>((static_cast<int32_t>(left) + static_cast<int32_t>(right)) / 2);
+  }
+
+  if (samplePlaybackDataBytesRemaining == 0) {
+    samplePlaybackFeeding = false;
+    if (samplePlaybackFile) {
+      samplePlaybackFile.close();
+    }
+  }
+  return true;
+}
+
+void sampleStreamTask(void *param) {
+  (void)param;
+  while (true) {
+    if (sampleStartRequest) {
+      sampleStartRequest = false;
+      (void)startSamplePlaybackFromSd();
+    }
+
+    if (!samplePlaybackActive || !samplePlaybackFeeding) {
+      vTaskDelay(pdMS_TO_TICKS(8));
+      continue;
+    }
+
+    if (sampleRingFree() < SAMPLE_RING_LOW_WATER) {
+      vTaskDelay(pdMS_TO_TICKS(1));
+      continue;
+    }
+
+    while (sampleRingFree() > 0 && samplePlaybackFeeding) {
+      int16_t sampleMono = 0;
+      if (!decodeNextSampleFromFile(sampleMono)) {
+        break;
+      }
+      if (!sampleRingPush(sampleMono)) {
+        break;
+      }
+    }
+
+    vTaskDelay(pdMS_TO_TICKS(1));
+  }
+}
+
+float getNextSamplePlaybackValue() {
+  if (!samplePlaybackActive) {
+    samplePlaybackLastValue = 0.0f;
+    sampleDcX1 = 0.0f;
+    sampleDcY1 = 0.0f;
+    samplePostLp = 0.0f;
+    return 0.0f;
+  }
+
+  if (!sampleOutputEnabled) {
+    if (sampleRingAvailable() >= SAMPLE_PREROLL_SAMPLES || !samplePlaybackFeeding) {
+      sampleOutputEnabled = true;
+    } else {
+      return 0.0f;
+    }
+  }
+
+  int16_t monoPcm = 0;
+  bool hasData = sampleRingPop(monoPcm);
+
+  if (hasData) {
+    samplePlaybackFadeGain = clampf(samplePlaybackFadeGain + SAMPLE_FADE_STEP, 0.0f, 1.0f);
+    float target = (static_cast<float>(monoPcm) / 32767.0f) * samplePlaybackFadeGain;
+    float delta = target - samplePlaybackLastValue;
+    delta = clampf(delta, -SAMPLE_OUTPUT_SLEW_MAX, SAMPLE_OUTPUT_SLEW_MAX);
+    float slewed = samplePlaybackLastValue + delta;
+    samplePlaybackLastValue += (slewed - samplePlaybackLastValue) * SAMPLE_OUTPUT_SMOOTH_ALPHA;
+  } else {
+    if (samplePlaybackFeeding) {
+      // Evitar modulación/granulado: si hay underrun temporal, cerrar salida del
+      // sample y esperar nuevo preroll antes de reanudar.
+      sampleOutputEnabled = false;
+      samplePlaybackFadeGain = clampf(samplePlaybackFadeGain - 4.0f * SAMPLE_FADE_STEP, 0.0f, 1.0f);
+      samplePlaybackLastValue *= SAMPLE_UNDERRUN_DECAY;
+    } else {
+      samplePlaybackFadeGain = clampf(samplePlaybackFadeGain - SAMPLE_FADE_STEP, 0.0f, 1.0f);
+      samplePlaybackLastValue *= SAMPLE_UNDERRUN_DECAY;
+      if (samplePlaybackFadeGain <= 0.0f) {
+        samplePlaybackActive = false;
+        sampleRingReadIndex = 0;
+        sampleRingWriteIndex = 0;
+        samplePlaybackLastValue = 0.0f;
+        sampleDcX1 = 0.0f;
+        sampleDcY1 = 0.0f;
+        samplePostLp = 0.0f;
+        return 0.0f;
+      }
+    }
+  }
+
+  // Limpieza dedicada del sample: DC-block para evitar offset; sin LP agresivo
+  // para conservar timbre natural del WAV.
+  float dcBlocked = samplePlaybackLastValue - sampleDcX1 + SAMPLE_DC_BLOCK_R * sampleDcY1;
+  sampleDcX1 = samplePlaybackLastValue;
+  sampleDcY1 = dcBlocked;
+  samplePostLp += (dcBlocked - samplePostLp) * SAMPLE_POST_LP_ALPHA;
+  return samplePostLp;
+}
+
 void setupI2S() {
   i2s_config_t i2sConfig = {};
   i2sConfig.mode = static_cast<i2s_mode_t>(I2S_MODE_MASTER | I2S_MODE_TX);
@@ -325,7 +851,7 @@ void setupI2S() {
   i2sConfig.channel_format = I2S_CHANNEL_FMT_RIGHT_LEFT;
   i2sConfig.communication_format = I2S_COMM_FORMAT_STAND_I2S;
   i2sConfig.intr_alloc_flags = ESP_INTR_FLAG_LEVEL1;
-  i2sConfig.dma_buf_count = 16;
+  i2sConfig.dma_buf_count = 24;
   i2sConfig.dma_buf_len = BUFFER_SIZE;
   i2sConfig.use_apll = false;
   i2sConfig.tx_desc_auto_clear = true;
@@ -383,7 +909,24 @@ void setup() {
   fmHzSmoothed = mapLinear(smoothedVcoBaseNorm, VCO_BASE_MIN_HZ, VCO_BASE_MAX_HZ);
 
   setupI2S();
-  Serial.println("Synth_tone_test: VCV FM siren (I4=LFO Hz, I3=FM %, I2=VCO Hz, C0/S0=delay time, C6/S6=delay feedback, I5=volume, red=waveform, white=auto/manual, blue=manual gate)");
+  sdInitialized = initSdCard();
+  if (sdInitialized) {
+    (void)prepareSampleMetadata();
+  }
+  xTaskCreatePinnedToCore(sampleStreamTask,
+                          "sample_stream",
+                          4096,
+                          nullptr,
+                          2,
+                          &sampleStreamTaskHandle,
+                          0);
+
+  Serial.println("Synth_tone_test: VCV FM siren (I4=LFO Hz, I3=FM %, I2=VCO Hz, C0/S0=delay time, C6/S6=delay feedback, I5=volume, red=waveform, white=auto/manual, blue=tap trigger + long-press start-point, green=play SD WAV)");
+  if (sdInitialized) {
+    Serial.println("SD ready");
+  } else {
+    Serial.println("SD not ready");
+  }
 }
 
 void loop() {
@@ -399,6 +942,7 @@ void loop() {
   }
   if ((now - redLastChangeMs) > DEBOUNCE_MS && redReading != redStableState) {
     redStableState = redReading;
+    suppressControlUntilMs = now + BUTTON_CONTROL_SUPPRESS_MS;
     if (redStableState == LOW) {
       lfoWaveform = static_cast<LfoWaveform>((static_cast<uint8_t>(lfoWaveform) + 1) % static_cast<uint8_t>(LfoWaveform::Count));
     }
@@ -411,6 +955,7 @@ void loop() {
   }
   if ((now - whiteLastChangeMs) > DEBOUNCE_MS && whiteReading != whiteStableState) {
     whiteStableState = whiteReading;
+    suppressControlUntilMs = now + BUTTON_CONTROL_SUPPRESS_MS;
     if (whiteStableState == LOW) {
       autoMode = !autoMode;
     }
@@ -439,6 +984,19 @@ void loop() {
   }
   if ((now - blueLastChangeMs) > DEBOUNCE_MS && blueReading != blueStableState) {
     blueStableState = blueReading;
+    suppressControlUntilMs = now + BUTTON_CONTROL_SUPPRESS_MS;
+    if (blueStableState == LOW) {
+      bluePressedStartMs = now;
+      blueLongPressLatched = false;
+    } else {
+      if (blueLongPressLatched) {
+        lfoStartPoint = static_cast<LfoStartPoint>((static_cast<uint8_t>(lfoStartPoint) + 1) % static_cast<uint8_t>(LfoStartPoint::Count));
+      }
+      blueLongPressLatched = false;
+    }
+  }
+  if (blueStableState == LOW && !blueLongPressLatched && (now - bluePressedStartMs >= BLUE_LONG_PRESS_MS)) {
+    blueLongPressLatched = true;
   }
   manualGateHeld = (blueStableState == LOW);
 
@@ -449,8 +1007,9 @@ void loop() {
   }
   if ((now - greenLastChangeMs) > DEBOUNCE_MS && greenReading != greenStableState) {
     greenStableState = greenReading;
+    suppressControlUntilMs = now + BUTTON_CONTROL_SUPPRESS_MS;
     if (greenStableState == LOW) {
-      lfoStartPoint = static_cast<LfoStartPoint>((static_cast<uint8_t>(lfoStartPoint) + 1) % static_cast<uint8_t>(LfoStartPoint::Count));
+      sampleStartRequest = true;
     }
   }
 
@@ -475,7 +1034,7 @@ void loop() {
   }
   manualGateHeldPrev = manualGateHeld;
 
-  if (now - lastControlMs >= CONTROL_UPDATE_MS) {
+  if (now >= suppressControlUntilMs && now - lastControlMs >= CONTROL_UPDATE_MS) {
     // Round-robin: 1 canal por tick para reducir actividad ADC instantanea y ruido.
     switch (muxScanIndex) {
       case 0:
@@ -610,7 +1169,8 @@ void loop() {
       delayedSample = static_cast<float>(delayBuffer[readIndex]) / 32767.0f;
     }
     float wetSample = delayedSample * DELAY_WET_TRIM;
-    float sample = drySample * (1.0f - DELAY_MIX) + wetSample * DELAY_MIX;
+    float synthSample = drySample * (1.0f - DELAY_MIX) + wetSample * DELAY_MIX;
+    float sdSample = getNextSamplePlaybackValue() * SAMPLE_MIX_GAIN;
     float feedbackInput = drySample + delayedSample * currentDelayFeedback;
     delayFeedbackFiltered += (feedbackInput - delayFeedbackFiltered) * DELAY_FEEDBACK_DARKEN_ALPHA;
 
@@ -622,16 +1182,25 @@ void loop() {
       delayIndex = (delayIndex + 1) % DELAY_BUFFER_SAMPLES;
     }
 
-    // Saturacion suave + limpieza final.
-    sample = tanhf(sample * OUTPUT_DRIVE) / outputDriveNorm;
-    float dcBlocked = sample - dcBlockX1 + DC_BLOCK_R * dcBlockY1;
-    dcBlockX1 = sample;
+    // Ruta de sirena: saturacion + limpieza final.
+    synthSample = tanhf(synthSample * OUTPUT_DRIVE) / outputDriveNorm;
+    float dcBlocked = synthSample - dcBlockX1 + DC_BLOCK_R * dcBlockY1;
+    dcBlockX1 = synthSample;
     dcBlockY1 = dcBlocked;
     outputLpState += (dcBlocked - outputLpState) * OUTPUT_LP_ALPHA;
-    sample = outputLpState * smoothedVcaLevel;
-    sample = clampf(sample, -1.0f, 1.0f);
 
-    int16_t pcm = static_cast<int16_t>(sample * 32767.0f);
+    float synthOut = outputLpState * smoothedVcaLevel;
+    if (samplePlaybackActive) {
+      synthOut *= 0.82f;
+    }
+    float mixed = synthOut + sdSample;
+    mixed = clampf(mixed, -1.1f, 1.1f);
+    if (!samplePlaybackActive) {
+      mixed = mixed - (mixed * mixed * mixed) * 0.12f;
+    }
+    mixed = clampf(mixed, -1.0f, 1.0f);
+
+    int16_t pcm = static_cast<int16_t>(mixed * 32767.0f);
     audioBuffer[i * 2] = pcm;
     audioBuffer[i * 2 + 1] = pcm;
 
