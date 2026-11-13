@@ -6,7 +6,7 @@
   ajusta la profundidad de FM (-100 .. 300%), I2 ajusta la frecuencia base del VCO (50 .. 4000 Hz), I0/C0 ajusta el tiempo del delay, I6/C6 ajusta el feedback del delay e I5 ajusta el volumen final (0 .. 100% lineal, con techo de salida al 50% del nivel anterior).
 - I1/C1 controla el tiempo de release del envelope aplicado al trigger manual.
 - No usa OLED; valida que el hardware de audio I2S + PCM5102A, mas el MUX de 
-  potenciometros, reproducen correctamente esa cadena de sintesis. Botones: rojo cambia forma de onda del LFO, blanco alterna modo AUTO/MANUAL, azul actua como trigger/gate en modo MANUAL y verde cambia el punto de inicio del LFO para el trigger manual.
+  potenciometros, reproducen correctamente esa cadena de sintesis. Botones: rojo cambia forma de onda del LFO, blanco alterna modo AUTO/MANUAL, azul mantiene trigger manual con toque simple y cicla el punto de inicio del LFO con pulsacion larga (2 s) + soltar, y verde dispara reproduccion de WAV desde SD.
 
 ## Pines I2S (igual que proyecto Synth)
 
@@ -27,6 +27,14 @@
 - I5/C5 -> Volumen de salida (0 .. 100%, lineal)
 - I6/C6 -> Feedback del delay (0 .. 100%)
 
+## Pines SD (mismo modulo y pines que upload-sd)
+
+- CS: GPIO33
+- SCK: GPIO25
+- MOSI: GPIO26
+- MISO: GPIO34
+- SPI: 4 MHz
+
 ## Botones
 
 - Rojo (GPIO4, INPUT_PULLUP): cicla la forma de onda del LFO en este orden:
@@ -36,11 +44,13 @@
     reiniciar).
   - Cuadrada.
 - Blanco (GPIO21, INPUT_PULLUP): alterna entre modo AUTO y modo MANUAL.
-- Azul (GPIO22, INPUT_PULLUP): en modo MANUAL actua como compuerta/trigger (mantener
-  presionado para que suene). En modo AUTO no afecta la salida.
-- Verde (GPIO23, INPUT_PULLUP): cicla el punto de inicio del LFO usado al disparar  
-  el trigger manual. Orden: cruce por cero ascendente -> maximo -> cruce por cero
-  descendente -> minimo -> vuelve al inicio.
+- Azul (GPIO22, INPUT_PULLUP):
+  - Toque simple en modo MANUAL: dispara trigger/gate manual de la sirena.
+  - Pulsacion larga de al menos 2 segundos y soltar: cicla el punto de inicio del
+    LFO usado en el trigger manual (cruce por cero ascendente -> maximo -> cruce
+    por cero descendente -> minimo -> vuelve al inicio).
+- Verde (GPIO23, INPUT_PULLUP): dispara la reproduccion de un WAV almacenado en la
+  raiz de la SD. El firmware toma el primer archivo `.wav` encontrado.
 
 ## Comportamiento
 
@@ -58,7 +68,7 @@
 
 - Trigger manual predecible:
   - En modo MANUAL, al presionar el boton azul, la fase del LFO se reinicia en el 
-    punto de inicio seleccionado con el boton verde.
+    punto de inicio seleccionado con pulsacion larga del boton azul.
   - Esto hace que cada disparo comience de forma repetible (por ejemplo, seno 
     partiendo en cruce por cero ascendente por defecto).
   - En ondas no sinusoidales, los puntos de interes equivalentes se asignan de forma
@@ -92,8 +102,14 @@
   - Mayor colchon DMA de I2S para evitar artefactos por starvation.
   - I5 funciona como volumen maestro post-delay con remapeo del recorrido real de 
     la perilla (compensacion de offset ADC/MUX) y curva de ganancia suave tipo audio-taper, para un comportamiento organico de 0 .. 100% sin cortes abruptos.
+- Reproduccion SD por boton verde:
+  - Al pulsar verde, el firmware intenta montar SD (si aun no esta montada), busca
+    el primer `.wav` en la raiz y lo mezcla con la salida del sintetizador.
+  - Formato requerido del WAV: PCM16, 44.1 kHz, mono o stereo.
+
 - Sin OLED: la sirena suena en modo AUTO apenas se enciende el ESP32. En modo 
-  MANUAL solo suena mientras se mantiene el boton azul. El timbre cambia por I0, I2, I3, I4, I5, I6 y la forma de onda seleccionada con el boton rojo.
+  MANUAL el trigger depende del boton azul (toque simple). El timbre cambia por I0,
+  I2, I3, I4, I5, I6 y la forma de onda seleccionada con el boton rojo.
 
 ## Glosario de audio y sintesis
 
