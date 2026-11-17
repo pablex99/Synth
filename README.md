@@ -49,6 +49,8 @@ Formato aceptado:
 Comportamiento de seleccion:
 - El firmware usa el primer archivo .wav encontrado en la raiz de la SD.
 - Se cachea la ruta preferida para no reescanear constantemente.
+- Con pulsacion larga del boton verde y soltar, avanza al siguiente .wav disponible
+  en la raiz (ciclo circular).
 
 ## 4) Mapeo de pines
 
@@ -72,6 +74,7 @@ Canales usados:
 - I4/C4: frecuencia LFO
 - I5/C5: volumen final
 - I6/C6: feedback delay
+- I7/C7: volumen de sample (ganancia de reproduccion WAV)
 
 ### Botones (INPUT_PULLUP)
 - Rojo: GPIO4
@@ -95,7 +98,13 @@ Canales usados:
   - MANUAL: trigger/gate de la sirena
   - Pulsacion larga + soltar: cambia punto de inicio del LFO
 - Verde:
-  - Dispara reproduccion del sample WAV en SD
+  - Toque corto: dispara reproduccion del sample WAV seleccionado.
+    Si el sample ya estaba sonando, vuelve a iniciar desde el comienzo (retrigger).
+  - Pulsacion larga (2 s) y soltar: cambia al siguiente sample WAV en SD.
+
+Control de balance synth/sample:
+- La perilla en I7/C7 permite ajustar el volumen relativo de los samples para
+  empatar el nivel con la sirena sin tocar el volumen maestro general.
 
 ## 6) Arquitectura de audio
 
@@ -124,6 +133,11 @@ Estos parametros viven en src/main.cpp y son los mas sensibles para ajustar limp
 - SAMPLE_MIX_GAIN
 - SAMPLE_OUTPUT_SMOOTH_ALPHA
 - SAMPLE_OUTPUT_SLEW_MAX
+
+Respuesta de controles:
+- El firmware usa suavizado adaptativo en perillas: respuesta mas rapida cuando el
+  cambio de valor es grande y suavizado mas fino en micro-ajustes para evitar
+  zipper noise.
 
 Si se ajustan, hacerlo con pruebas A/B cortas y manteniendo build estable en RAM.
 
