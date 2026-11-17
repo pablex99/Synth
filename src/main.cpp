@@ -28,6 +28,7 @@ constexpr uint8_t MUX_CH_FM_DEPTH = 3;        // I3/C3
 constexpr uint8_t MUX_CH_LFO_RATE = 4;        // I4/C4
 constexpr uint8_t MUX_CH_VCA_LEVEL = 5;       // I5/C5
 constexpr uint8_t MUX_CH_DELAY_FEEDBACK = 6;  // C6/S6
+constexpr uint8_t MUX_CH_SAMPLE_LEVEL = 7;    // I7/C7
 constexpr int BTN_RED_PIN = 4;          // Rojo: cambia forma de onda del LFO
 constexpr int BTN_WHITE_PIN = 21;       // Blanco: alterna modo AUTO/MANUAL
 constexpr int BTN_BLUE_PIN = 22;        // Azul: compuerta manual (mantener)
@@ -41,9 +42,10 @@ constexpr uint32_t SD_SPI_HZ = 4000000;
 
 constexpr int SAMPLE_RATE = 44100;
 constexpr int BUFFER_SIZE = 512;
-constexpr uint32_t CONTROL_UPDATE_MS = 20;
+constexpr uint32_t CONTROL_UPDATE_MS = 12;
 constexpr uint32_t DEBOUNCE_MS = 60;
 constexpr uint32_t BLUE_LONG_PRESS_MS = 2000;
+constexpr uint32_t GREEN_LONG_PRESS_MS = 2000;
 constexpr uint16_t SAMPLE_SD_BLOCK_BYTES = 1536;
 constexpr uint16_t SAMPLE_RING_CAPACITY = 1024;
 constexpr uint16_t SAMPLE_RING_LOW_WATER = 512;
@@ -59,15 +61,17 @@ constexpr float SAMPLE_POST_LP_ALPHA = 1.0f;
 constexpr uint32_t BUTTON_CONTROL_SUPPRESS_MS = 140;
 
 // Filtros de lectura/control para minimizar zipper noise.
-constexpr float POT_SMOOTH_ALPHA = 0.08f;
-constexpr float PARAM_SMOOTH_ALPHA = 0.0013f;
-constexpr float POT_NORMALIZED_DEADBAND = 0.007f;
+constexpr float POT_SMOOTH_ALPHA = 0.09f;
+constexpr float PARAM_SMOOTH_ALPHA = 0.0017f;
+constexpr float PARAM_ALPHA_BOOST_MAX = 0.0030f;
+constexpr float PARAM_MAX_STEP_PER_SAMPLE = 0.0018f;
+constexpr float POT_NORMALIZED_DEADBAND = 0.012f;
 
 // Endurecimiento de lectura MUX/ADC para reducir ruido de conversion y arrastre.
 constexpr uint16_t MUX_SETTLE_US = 300;
 constexpr uint16_t MUX_INTER_SAMPLE_US = 40;
 constexpr uint8_t MUX_DUMMY_READS = 2;
-constexpr uint8_t MUX_AVG_SAMPLES = 4;
+constexpr uint8_t MUX_AVG_SAMPLES = 6;
 
 // Rangos ampliados de controles:
 // I4: 0.0001..50 Hz, I3: -100..300 %, I2: 50..4000 Hz.
@@ -78,6 +82,7 @@ constexpr float VCO_BASE_MAX_HZ = 4000.0f;
 constexpr float FM_DEPTH_MIN_PERCENT = -100.0f;
 constexpr float FM_DEPTH_MAX_PERCENT = 300.0f;
 constexpr float VCA_LEVEL_MAX = 0.5f;
+constexpr float SAMPLE_LEVEL_MAX = 1.2f;
 
 // Voz/timbre tipo dub analogo.
 constexpr float OUTPUT_GAIN = 0.30f;
@@ -133,6 +138,7 @@ float muxRawSmoothFmDepth = 2048.0f;
 float muxRawSmoothLfoRate = 2048.0f;
 float muxRawSmoothVcaLevel = 2048.0f;
 float muxRawSmoothDelayFeedback = 2048.0f;
+float muxRawSmoothSampleLevel = 2048.0f;
 float potDelayTimeNorm = 0.5f;
 float potEnvReleaseNorm = 0.5f;
 float potVcoBaseNorm = 0.5f;
@@ -140,6 +146,7 @@ float potFmDepthNorm = 0.5f;
 float potLfoRateNorm = 0.5f;
 float potVcaLevel = 0.5f;
 float potDelayFeedbackNorm = 0.3f;
+float potSampleLevelNorm = 0.5f;
 float smoothedDelayTimeNorm = 0.5f;
 float smoothedEnvReleaseNorm = 0.5f;
 float smoothedVcoBaseNorm = 0.5f;
@@ -147,6 +154,7 @@ float smoothedFmDepthNorm = 0.5f;
 float smoothedLfoRateNorm = 0.5f;
 float smoothedVcaLevel = 0.5f;
 float smoothedDelayFeedbackNorm = 0.3f;
+float smoothedSampleLevelNorm = 0.5f;
 uint32_t lastControlMs = 0;
 uint8_t muxScanIndex = 0;
 bool autoMode = true;
@@ -197,6 +205,8 @@ uint32_t blueLastChangeMs = 0;
 bool greenLastReading = HIGH;
 bool greenStableState = HIGH;
 uint32_t greenLastChangeMs = 0;
+uint32_t greenPressedStartMs = 0;
+bool greenLongPressLatched = false;
 uint32_t bluePressedStartMs = 0;
 bool blueLongPressLatched = false;
 
@@ -228,12 +238,15 @@ float sampleDcX1 = 0.0f;
 float sampleDcY1 = 0.0f;
 float samplePostLp = 0.0f;
 TaskHandle_t sampleStreamTaskHandle = nullptr;
+TaskHandle_t controlTaskHandle = nullptr;
 volatile bool sampleStartRequest = false;
+volatile bool sampleNextRequest = false;
 volatile bool sampleOutputEnabled = false;
 uint32_t suppressControlUntilMs = 0;
 
 bool initSdCard();
 String findFirstWavPath();
+String findNextWavPath(const String &currentPath);
 
 float clampf(float value, float minValue, float maxValue) {
   if (value < minValue) {
@@ -247,6 +260,14 @@ float clampf(float value, float minValue, float maxValue) {
 
 float mapLinear(float normalized, float minValue, float maxValue) {
   return minValue + clampf(normalized, 0.0f, 1.0f) * (maxValue - minValue);
+}
+
+float smoothParamAdaptive(float current, float target) {
+  float delta = fabsf(target - current);
+  float alpha = PARAM_SMOOTH_ALPHA + clampf(delta * 0.06f, 0.0f, PARAM_ALPHA_BOOST_MAX);
+  float step = (target - current) * alpha;
+  step = clampf(step, -PARAM_MAX_STEP_PER_SAMPLE, PARAM_MAX_STEP_PER_SAMPLE);
+  return current + step;
 }
 
 // Convierte la lectura normalizada del pot de volumen al rango [0..1] util real,
@@ -534,6 +555,74 @@ String findFirstWavPath() {
   return selectedPath;
 }
 
+String findNextWavPath(const String &currentPath) {
+  File root = SD.open("/");
+  if (!root || !root.isDirectory()) {
+    if (root) {
+      root.close();
+    }
+    return "";
+  }
+
+  String firstPath;
+  String nextPath;
+  bool foundCurrent = false;
+
+  while (true) {
+    File entry = root.openNextFile();
+    if (!entry) {
+      break;
+    }
+
+    if (!entry.isDirectory()) {
+      String name = String(entry.name());
+      if (hasWavExtension(name)) {
+        String path = name.startsWith("/") ? name : ("/" + name);
+        if (firstPath.length() == 0) {
+          firstPath = path;
+        }
+        if (path == currentPath) {
+          foundCurrent = true;
+        } else if (foundCurrent && nextPath.length() == 0) {
+          nextPath = path;
+          entry.close();
+          break;
+        }
+      }
+    }
+    entry.close();
+  }
+
+  root.close();
+
+  if (nextPath.length() > 0) {
+    return nextPath;
+  }
+
+  return firstPath;
+}
+
+bool selectNextSampleFromSd() {
+  if (!sdInitialized && !initSdCard()) {
+    return false;
+  }
+  sdInitialized = true;
+
+  String currentPath = samplePreferredPath;
+  if (currentPath.length() == 0 || !SD.exists(currentPath)) {
+    currentPath = findFirstWavPath();
+  }
+
+  String nextPath = findNextWavPath(currentPath);
+  if (nextPath.length() == 0) {
+    return false;
+  }
+
+  samplePreferredPath = nextPath;
+  sampleMetaReady = false;
+  return prepareSampleMetadata();
+}
+
 bool initSdCard() {
   SPI.begin(SD_SCK_PIN, SD_MISO_PIN, SD_MOSI_PIN, SD_CS_PIN);
   pinMode(SD_CS_PIN, OUTPUT);
@@ -635,10 +724,6 @@ bool startSamplePlaybackFromSd() {
     return false;
   }
   sdInitialized = true;
-
-  if (samplePlaybackActive) {
-    return true;
-  }
 
   if (!sampleMetaReady) {
     if (!prepareSampleMetadata()) {
@@ -755,6 +840,11 @@ bool decodeNextSampleFromFile(int16_t &monoPcm) {
 void sampleStreamTask(void *param) {
   (void)param;
   while (true) {
+    if (sampleNextRequest) {
+      sampleNextRequest = false;
+      (void)selectNextSampleFromSd();
+    }
+
     if (sampleStartRequest) {
       sampleStartRequest = false;
       (void)startSamplePlaybackFromSd();
@@ -781,6 +871,52 @@ void sampleStreamTask(void *param) {
     }
 
     vTaskDelay(pdMS_TO_TICKS(1));
+  }
+}
+
+void controlScanTask(void *param) {
+  (void)param;
+  uint32_t controlLastMs = 0;
+  uint8_t controlMuxScanIndex = 0;
+
+  while (true) {
+    uint32_t now = millis();
+    if (now < suppressControlUntilMs || (now - controlLastMs) < CONTROL_UPDATE_MS) {
+      vTaskDelay(pdMS_TO_TICKS(1));
+      continue;
+    }
+
+    // Round-robin fuera del hilo de audio para evitar bloquear el render.
+    switch (controlMuxScanIndex) {
+      case 0:
+        potDelayTimeNorm = readSmoothedNormalized(MUX_CH_DELAY_TIME, muxRawSmoothDelayTime);
+        break;
+      case 1:
+        potEnvReleaseNorm = readSmoothedNormalized(MUX_CH_ENV_RELEASE, muxRawSmoothEnvRelease);
+        break;
+      case 2:
+        potVcoBaseNorm = readSmoothedNormalized(MUX_CH_VCO_BASE, muxRawSmoothVcoBase);
+        break;
+      case 3:
+        potFmDepthNorm = readSmoothedNormalized(MUX_CH_FM_DEPTH, muxRawSmoothFmDepth);
+        break;
+      case 4:
+        potLfoRateNorm = readSmoothedNormalized(MUX_CH_LFO_RATE, muxRawSmoothLfoRate);
+        break;
+      case 5:
+        potVcaLevel = readSmoothedNormalized(MUX_CH_VCA_LEVEL, muxRawSmoothVcaLevel);
+        break;
+      case 6:
+        potDelayFeedbackNorm = readSmoothedNormalized(MUX_CH_DELAY_FEEDBACK, muxRawSmoothDelayFeedback);
+        break;
+      case 7:
+      default:
+        potSampleLevelNorm = readSmoothedNormalized(MUX_CH_SAMPLE_LEVEL, muxRawSmoothSampleLevel);
+        break;
+    }
+
+    controlMuxScanIndex = (controlMuxScanIndex + 1) % 8;
+    controlLastMs = now;
   }
 }
 
@@ -890,6 +1026,7 @@ void setup() {
   muxRawSmoothLfoRate = static_cast<float>(readMuxRaw(MUX_CH_LFO_RATE));
   muxRawSmoothVcaLevel = static_cast<float>(readMuxRaw(MUX_CH_VCA_LEVEL));
   muxRawSmoothDelayFeedback = static_cast<float>(readMuxRaw(MUX_CH_DELAY_FEEDBACK));
+  muxRawSmoothSampleLevel = static_cast<float>(readMuxRaw(MUX_CH_SAMPLE_LEVEL));
 
   potDelayTimeNorm = clampf(muxRawSmoothDelayTime / 4095.0f, 0.0f, 1.0f);
   potEnvReleaseNorm = clampf(muxRawSmoothEnvRelease / 4095.0f, 0.0f, 1.0f);
@@ -898,6 +1035,7 @@ void setup() {
   potLfoRateNorm = clampf(muxRawSmoothLfoRate / 4095.0f, 0.0f, 1.0f);
   potVcaLevel = clampf(muxRawSmoothVcaLevel / 4095.0f, 0.0f, 1.0f);
   potDelayFeedbackNorm = clampf(muxRawSmoothDelayFeedback / 4095.0f, 0.0f, 1.0f);
+  potSampleLevelNorm = clampf(muxRawSmoothSampleLevel / 4095.0f, 0.0f, 1.0f);
 
   smoothedDelayTimeNorm = potDelayTimeNorm;
   smoothedEnvReleaseNorm = potEnvReleaseNorm;
@@ -906,6 +1044,7 @@ void setup() {
   smoothedLfoRateNorm = potLfoRateNorm;
   smoothedVcaLevel = potVcaLevel;
   smoothedDelayFeedbackNorm = potDelayFeedbackNorm;
+  smoothedSampleLevelNorm = potSampleLevelNorm;
   fmHzSmoothed = mapLinear(smoothedVcoBaseNorm, VCO_BASE_MIN_HZ, VCO_BASE_MAX_HZ);
 
   setupI2S();
@@ -920,8 +1059,15 @@ void setup() {
                           2,
                           &sampleStreamTaskHandle,
                           0);
+  xTaskCreatePinnedToCore(controlScanTask,
+                          "control_scan",
+                          4096,
+                          nullptr,
+                          0,
+                          &controlTaskHandle,
+                          0);
 
-  Serial.println("Synth_tone_test: VCV FM siren (I4=LFO Hz, I3=FM %, I2=VCO Hz, C0/S0=delay time, C6/S6=delay feedback, I5=volume, red=waveform, white=auto/manual, blue=tap trigger + long-press start-point, green=play SD WAV)");
+  Serial.println("Synth_tone_test: VCV FM siren (I4=LFO Hz, I3=FM %, I2=VCO Hz, C0/S0=delay time, C6/S6=delay feedback, I5=volume, I7=sample level, red=waveform, white=auto/manual, blue=tap trigger + long-press start-point, green=play SD WAV)");
   if (sdInitialized) {
     Serial.println("SD ready");
   } else {
@@ -1009,8 +1155,19 @@ void loop() {
     greenStableState = greenReading;
     suppressControlUntilMs = now + BUTTON_CONTROL_SUPPRESS_MS;
     if (greenStableState == LOW) {
-      sampleStartRequest = true;
+      greenPressedStartMs = now;
+      greenLongPressLatched = false;
+    } else {
+      if (greenLongPressLatched) {
+        sampleNextRequest = true;
+      } else {
+        sampleStartRequest = true;
+      }
+      greenLongPressLatched = false;
     }
+  }
+  if (greenStableState == LOW && !greenLongPressLatched && (now - greenPressedStartMs >= GREEN_LONG_PRESS_MS)) {
+    greenLongPressLatched = true;
   }
 
   // En modo manual, al presionar el trigger reiniciamos fase para que cada disparo
@@ -1034,36 +1191,6 @@ void loop() {
   }
   manualGateHeldPrev = manualGateHeld;
 
-  if (now >= suppressControlUntilMs && now - lastControlMs >= CONTROL_UPDATE_MS) {
-    // Round-robin: 1 canal por tick para reducir actividad ADC instantanea y ruido.
-    switch (muxScanIndex) {
-      case 0:
-        potDelayTimeNorm = readSmoothedNormalized(MUX_CH_DELAY_TIME, muxRawSmoothDelayTime);
-        break;
-      case 1:
-        potEnvReleaseNorm = readSmoothedNormalized(MUX_CH_ENV_RELEASE, muxRawSmoothEnvRelease);
-        break;
-      case 2:
-        potVcoBaseNorm = readSmoothedNormalized(MUX_CH_VCO_BASE, muxRawSmoothVcoBase);
-        break;
-      case 3:
-        potFmDepthNorm = readSmoothedNormalized(MUX_CH_FM_DEPTH, muxRawSmoothFmDepth);
-        break;
-      case 4:
-        potLfoRateNorm = readSmoothedNormalized(MUX_CH_LFO_RATE, muxRawSmoothLfoRate);
-        break;
-      case 5:
-        potVcaLevel = readSmoothedNormalized(MUX_CH_VCA_LEVEL, muxRawSmoothVcaLevel);
-        break;
-      case 6:
-      default:
-        potDelayFeedbackNorm = readSmoothedNormalized(MUX_CH_DELAY_FEEDBACK, muxRawSmoothDelayFeedback);
-        break;
-    }
-    muxScanIndex = (muxScanIndex + 1) % 7;
-    lastControlMs = now;
-  }
-
   float targetDelayTimeNorm = potDelayTimeNorm;
   float targetEnvReleaseNorm = potEnvReleaseNorm;
   float targetVcoBaseNorm = potVcoBaseNorm;
@@ -1071,16 +1198,18 @@ void loop() {
   float targetLfoRateNorm = potLfoRateNorm;
   float targetVcaLevel = mapVcaPotToGain(potVcaLevel) * VCA_LEVEL_MAX;
   float targetDelayFeedbackNorm = potDelayFeedbackNorm;
+  float targetSampleLevelNorm = mapVcaPotToGain(potSampleLevelNorm) * SAMPLE_LEVEL_MAX;
   float targetGateLevel = (autoMode || envelopeStage != EnvelopeStage::Idle) ? 1.0f : 0.0f;
 
   for (int i = 0; i < BUFFER_SIZE; ++i) {
-    smoothedDelayTimeNorm += (targetDelayTimeNorm - smoothedDelayTimeNorm) * PARAM_SMOOTH_ALPHA;
-    smoothedEnvReleaseNorm += (targetEnvReleaseNorm - smoothedEnvReleaseNorm) * PARAM_SMOOTH_ALPHA;
-    smoothedVcoBaseNorm += (targetVcoBaseNorm - smoothedVcoBaseNorm) * PARAM_SMOOTH_ALPHA;
-    smoothedFmDepthNorm += (targetFmDepthNorm - smoothedFmDepthNorm) * PARAM_SMOOTH_ALPHA;
-    smoothedLfoRateNorm += (targetLfoRateNorm - smoothedLfoRateNorm) * PARAM_SMOOTH_ALPHA;
-    smoothedVcaLevel += (targetVcaLevel - smoothedVcaLevel) * PARAM_SMOOTH_ALPHA;
-    smoothedDelayFeedbackNorm += (targetDelayFeedbackNorm - smoothedDelayFeedbackNorm) * PARAM_SMOOTH_ALPHA;
+    smoothedDelayTimeNorm = smoothParamAdaptive(smoothedDelayTimeNorm, targetDelayTimeNorm);
+    smoothedEnvReleaseNorm = smoothParamAdaptive(smoothedEnvReleaseNorm, targetEnvReleaseNorm);
+    smoothedVcoBaseNorm = smoothParamAdaptive(smoothedVcoBaseNorm, targetVcoBaseNorm);
+    smoothedFmDepthNorm = smoothParamAdaptive(smoothedFmDepthNorm, targetFmDepthNorm);
+    smoothedLfoRateNorm = smoothParamAdaptive(smoothedLfoRateNorm, targetLfoRateNorm);
+    smoothedVcaLevel = smoothParamAdaptive(smoothedVcaLevel, targetVcaLevel);
+    smoothedDelayFeedbackNorm = smoothParamAdaptive(smoothedDelayFeedbackNorm, targetDelayFeedbackNorm);
+    smoothedSampleLevelNorm = smoothParamAdaptive(smoothedSampleLevelNorm, targetSampleLevelNorm);
     gateLevel += (targetGateLevel - gateLevel) * GATE_SMOOTH_ALPHA;
 
     // Envelope para modo manual: al presionar trigger abre a ganancia plena y
@@ -1170,7 +1299,7 @@ void loop() {
     }
     float wetSample = delayedSample * DELAY_WET_TRIM;
     float synthSample = drySample * (1.0f - DELAY_MIX) + wetSample * DELAY_MIX;
-    float sdSample = getNextSamplePlaybackValue() * SAMPLE_MIX_GAIN;
+    float sdSample = getNextSamplePlaybackValue() * SAMPLE_MIX_GAIN * smoothedSampleLevelNorm;
     float feedbackInput = drySample + delayedSample * currentDelayFeedback;
     delayFeedbackFiltered += (feedbackInput - delayFeedbackFiltered) * DELAY_FEEDBACK_DARKEN_ALPHA;
 
