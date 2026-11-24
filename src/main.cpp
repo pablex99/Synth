@@ -29,6 +29,7 @@ constexpr uint8_t MUX_CH_LFO_RATE = 4;        // I4/C4
 constexpr uint8_t MUX_CH_VCA_LEVEL = 5;       // I5/C5
 constexpr uint8_t MUX_CH_DELAY_FEEDBACK = 6;  // C6/S6
 constexpr uint8_t MUX_CH_SAMPLE_LEVEL = 7;    // I7/C7
+constexpr uint8_t MUX_CH_SAMPLE_TEMPO = 8;    // I8/C8
 constexpr int BTN_RED_PIN = 4;          // Rojo: cambia forma de onda del LFO
 constexpr int BTN_WHITE_PIN = 21;       // Blanco: alterna modo AUTO/MANUAL
 constexpr int BTN_BLUE_PIN = 22;        // Azul: compuerta manual (mantener)
@@ -53,11 +54,18 @@ constexpr uint16_t SAMPLE_PREROLL_SAMPLES = 256;
 constexpr float SAMPLE_MIX_GAIN = 0.5f;
 constexpr float SAMPLE_FADE_MS = 10.0f;
 constexpr float SAMPLE_FADE_STEP = 1.0f / ((SAMPLE_FADE_MS * SAMPLE_RATE / 1000.0f) > 1.0f ? (SAMPLE_FADE_MS * SAMPLE_RATE / 1000.0f) : 1.0f);
-constexpr float SAMPLE_OUTPUT_SMOOTH_ALPHA = 0.65f;
+constexpr float SAMPLE_OUTPUT_SMOOTH_ALPHA = 0.72f;
 constexpr float SAMPLE_UNDERRUN_DECAY = 0.98f;
-constexpr float SAMPLE_OUTPUT_SLEW_MAX = 0.08f;
+constexpr float SAMPLE_OUTPUT_SLEW_MAX = 0.25f;
+constexpr float SAMPLE_OUTPUT_SLEW_FAST_MULT = 1.0f;
 constexpr float SAMPLE_DC_BLOCK_R = 0.995f;
-constexpr float SAMPLE_POST_LP_ALPHA = 1.0f;
+constexpr float SAMPLE_POST_LP_ALPHA = 0.55f;
+constexpr float SAMPLE_POST_LP_ALPHA_FAST_MIN = 0.28f;
+constexpr float SAMPLE_FAST_AA_ALPHA_BASE = 0.42f;
+constexpr float SAMPLE_FAST_AA_ALPHA_MIN = 0.20f;
+constexpr float SAMPLE_FAST_AA_BLEND_MAX = 0.42f;
+constexpr float SAMPLE_SRC_STEP_MIN = 0.5f;
+constexpr float SAMPLE_SRC_STEP_MAX = 1.18f;
 constexpr uint32_t BUTTON_CONTROL_SUPPRESS_MS = 140;
 
 // Filtros de lectura/control para minimizar zipper noise.
@@ -68,10 +76,10 @@ constexpr float PARAM_MAX_STEP_PER_SAMPLE = 0.0018f;
 constexpr float POT_NORMALIZED_DEADBAND = 0.012f;
 
 // Endurecimiento de lectura MUX/ADC para reducir ruido de conversion y arrastre.
-constexpr uint16_t MUX_SETTLE_US = 300;
-constexpr uint16_t MUX_INTER_SAMPLE_US = 40;
-constexpr uint8_t MUX_DUMMY_READS = 2;
-constexpr uint8_t MUX_AVG_SAMPLES = 6;
+constexpr uint16_t MUX_SETTLE_US = 500;
+constexpr uint16_t MUX_INTER_SAMPLE_US = 60;
+constexpr uint8_t MUX_DUMMY_READS = 3;
+constexpr uint8_t MUX_AVG_SAMPLES = 8;
 
 // Rangos ampliados de controles:
 // I4: 0.0001..50 Hz, I3: -100..300 %, I2: 50..4000 Hz.
@@ -80,26 +88,37 @@ constexpr float LFO_RATE_MAX_HZ = 50.0f;
 constexpr float VCO_BASE_MIN_HZ = 50.0f;
 constexpr float VCO_BASE_MAX_HZ = 4000.0f;
 constexpr float FM_DEPTH_MIN_PERCENT = -100.0f;
-constexpr float FM_DEPTH_MAX_PERCENT = 300.0f;
+constexpr float FM_DEPTH_MAX_PERCENT = 240.0f;
 constexpr float VCA_LEVEL_MAX = 0.5f;
-constexpr float SAMPLE_LEVEL_MAX = 1.2f;
+constexpr float SAMPLE_LEVEL_MAX = 1.0f;
+constexpr float SAMPLE_LEVEL_DEADZONE = 0.02f;
+constexpr float SAMPLE_TEMPO_MIN = 0.6f;
+constexpr float SAMPLE_TEMPO_MAX = 1.15f;
+constexpr float VCA_HARD_MUTE_POT_NORM = 0.08f;
+constexpr float SAMPLE_HARD_MUTE_POT_NORM = 0.08f;
 
 // Voz/timbre tipo dub analogo.
 constexpr float OUTPUT_GAIN = 0.30f;
 constexpr float DUTY_CYCLE = 0.45f;
 constexpr float VCO_TONE_ALPHA = 0.18f;
-constexpr float OUTPUT_DRIVE = 1.20f;
 
-// Delay dub fijo.
-constexpr float DELAY_TIME_MS = 7000.0f;
-constexpr float DELAY_TIME_MIN_MS = 0.0f;
+// Delay dub calibrado para sirena: rango musical y repeticiones controladas.
+constexpr float DELAY_TIME_MS = 1800.0f;
+constexpr float DELAY_TIME_MIN_MS = 60.0f;
 constexpr int DELAY_SAMPLE_RATE = 7000;
 constexpr int DELAY_BUFFER_SAMPLES = static_cast<int>(DELAY_SAMPLE_RATE * DELAY_TIME_MS / 1000.0f);
 constexpr float DELAY_FEEDBACK_MIN = 0.0f;
-constexpr float DELAY_FEEDBACK_MAX = 1.0f;
-constexpr float DELAY_MIX = 0.45f;
-constexpr float DELAY_WET_TRIM = 1.0f;
-constexpr float DELAY_FEEDBACK_DARKEN_ALPHA = 0.05f;
+constexpr float DELAY_FEEDBACK_MAX = 0.78f;
+constexpr float DELAY_MIX = 0.32f;
+constexpr float DELAY_WET_TRIM = 0.85f;
+constexpr float DELAY_INPUT_SEND = 0.70f;
+constexpr float DELAY_FEEDBACK_DARKEN_ALPHA = 0.12f;
+constexpr float DELAY_OFF_FEEDBACK_NORM = 0.03f;
+constexpr float DELAY_OFF_TIME_NORM = 0.02f;
+constexpr bool SYNTH_DELAY_ENABLED = true;
+constexpr float SYNTH_PATH_TRIM = 0.86f;
+constexpr float SAMPLE_PATH_TRIM = 0.80f;
+constexpr float MIX_PEAK_GUARD = 0.92f;
 
 // Envelope para trigger manual.
 constexpr float ENV_ATTACK_MS = 1.0f;
@@ -117,6 +136,7 @@ constexpr float GATE_SMOOTH_ALPHA = 0.01f;
 constexpr float VCA_POT_MIN_NORM = 0.045f;
 constexpr float VCA_POT_MAX_NORM = 0.995f;
 constexpr float VCA_AUDIO_TAPER = 1.6f;
+constexpr uint8_t BUTTON_EVENT_QUEUE_CAPACITY = 16;
 
 float carrierPhase = 0.0f;
 float lfoPhase = 0.0f;
@@ -139,6 +159,7 @@ float muxRawSmoothLfoRate = 2048.0f;
 float muxRawSmoothVcaLevel = 2048.0f;
 float muxRawSmoothDelayFeedback = 2048.0f;
 float muxRawSmoothSampleLevel = 2048.0f;
+float muxRawSmoothSampleTempo = 2048.0f;
 float potDelayTimeNorm = 0.5f;
 float potEnvReleaseNorm = 0.5f;
 float potVcoBaseNorm = 0.5f;
@@ -147,6 +168,7 @@ float potLfoRateNorm = 0.5f;
 float potVcaLevel = 0.5f;
 float potDelayFeedbackNorm = 0.3f;
 float potSampleLevelNorm = 0.5f;
+float potSampleTempoNorm = 0.5f;
 float smoothedDelayTimeNorm = 0.5f;
 float smoothedEnvReleaseNorm = 0.5f;
 float smoothedVcoBaseNorm = 0.5f;
@@ -155,6 +177,7 @@ float smoothedLfoRateNorm = 0.5f;
 float smoothedVcaLevel = 0.5f;
 float smoothedDelayFeedbackNorm = 0.3f;
 float smoothedSampleLevelNorm = 0.5f;
+float smoothedSampleTempoNorm = 0.5f;
 uint32_t lastControlMs = 0;
 uint8_t muxScanIndex = 0;
 bool autoMode = true;
@@ -237,12 +260,31 @@ float samplePlaybackLastValue = 0.0f;
 float sampleDcX1 = 0.0f;
 float sampleDcY1 = 0.0f;
 float samplePostLp = 0.0f;
+float sampleFastAaState = 0.0f;
+float sampleTempoPhase = 0.0f;
+float sampleResampleP = 0.0f;
+float sampleResampleA = 0.0f;
+float sampleResampleB = 0.0f;
+float sampleResampleN = 0.0f;
+bool sampleResampleReady = false;
 TaskHandle_t sampleStreamTaskHandle = nullptr;
 TaskHandle_t controlTaskHandle = nullptr;
 volatile bool sampleStartRequest = false;
 volatile bool sampleNextRequest = false;
 volatile bool sampleOutputEnabled = false;
 uint32_t suppressControlUntilMs = 0;
+
+enum class ButtonEventType : uint8_t {
+  CycleWaveform = 0,
+  ToggleAutoMode,
+  CycleLfoStartPoint,
+  TriggerSample,
+  NextSample
+};
+
+ButtonEventType buttonEventQueue[BUTTON_EVENT_QUEUE_CAPACITY] = {};
+uint8_t buttonEventReadIndex = 0;
+uint8_t buttonEventWriteIndex = 0;
 
 bool initSdCard();
 String findFirstWavPath();
@@ -260,6 +302,86 @@ float clampf(float value, float minValue, float maxValue) {
 
 float mapLinear(float normalized, float minValue, float maxValue) {
   return minValue + clampf(normalized, 0.0f, 1.0f) * (maxValue - minValue);
+}
+
+float mapSampleLevelLinear(float potNorm) {
+  float x = (potNorm - SAMPLE_LEVEL_DEADZONE) / (1.0f - SAMPLE_LEVEL_DEADZONE);
+  return clampf(x, 0.0f, 1.0f);
+}
+
+float cubicHermite(float p0, float p1, float p2, float p3, float t) {
+  float c0 = p1;
+  float c1 = 0.5f * (p2 - p0);
+  float c2 = p0 - 2.5f * p1 + 2.0f * p2 - 0.5f * p3;
+  float c3 = 0.5f * (p3 - p0) + 1.5f * (p1 - p2);
+  return ((c3 * t + c2) * t + c1) * t + c0;
+}
+
+void clearSynthAudioState(bool clearDelayBufferState) {
+  outputLpState = 0.0f;
+  dcBlockX1 = 0.0f;
+  dcBlockY1 = 0.0f;
+  delayFeedbackFiltered = 0.0f;
+  delayWritePhase = 0;
+  if (clearDelayBufferState) {
+    for (int i = 0; i < DELAY_BUFFER_SAMPLES; ++i) {
+      delayBuffer[i] = 0;
+    }
+    delayIndex = 0;
+  }
+}
+
+void clearDelayState() {
+  delayFeedbackFiltered = 0.0f;
+  delayWritePhase = 0;
+  for (int i = 0; i < DELAY_BUFFER_SAMPLES; ++i) {
+    delayBuffer[i] = 0;
+  }
+  delayIndex = 0;
+}
+
+bool enqueueButtonEvent(ButtonEventType eventType) {
+  uint8_t nextWrite = static_cast<uint8_t>((buttonEventWriteIndex + 1) % BUTTON_EVENT_QUEUE_CAPACITY);
+  if (nextWrite == buttonEventReadIndex) {
+    return false;
+  }
+  buttonEventQueue[buttonEventWriteIndex] = eventType;
+  buttonEventWriteIndex = nextWrite;
+  return true;
+}
+
+bool dequeueButtonEvent(ButtonEventType &eventType) {
+  if (buttonEventReadIndex == buttonEventWriteIndex) {
+    return false;
+  }
+  eventType = buttonEventQueue[buttonEventReadIndex];
+  buttonEventReadIndex = static_cast<uint8_t>((buttonEventReadIndex + 1) % BUTTON_EVENT_QUEUE_CAPACITY);
+  return true;
+}
+
+void processButtonEvents() {
+  ButtonEventType eventType = ButtonEventType::CycleWaveform;
+  while (dequeueButtonEvent(eventType)) {
+    switch (eventType) {
+      case ButtonEventType::CycleWaveform:
+        lfoWaveform = static_cast<LfoWaveform>((static_cast<uint8_t>(lfoWaveform) + 1) % static_cast<uint8_t>(LfoWaveform::Count));
+        break;
+      case ButtonEventType::ToggleAutoMode:
+        autoMode = !autoMode;
+        break;
+      case ButtonEventType::CycleLfoStartPoint:
+        lfoStartPoint = static_cast<LfoStartPoint>((static_cast<uint8_t>(lfoStartPoint) + 1) % static_cast<uint8_t>(LfoStartPoint::Count));
+        break;
+      case ButtonEventType::TriggerSample:
+        sampleStartRequest = true;
+        break;
+      case ButtonEventType::NextSample:
+        sampleNextRequest = true;
+        break;
+      default:
+        break;
+    }
+  }
 }
 
 float smoothParamAdaptive(float current, float target) {
@@ -654,6 +776,13 @@ void stopSamplePlayback() {
   sampleDcX1 = 0.0f;
   sampleDcY1 = 0.0f;
   samplePostLp = 0.0f;
+  sampleFastAaState = 0.0f;
+  sampleResampleP = 0.0f;
+  sampleTempoPhase = 0.0f;
+  sampleResampleA = 0.0f;
+  sampleResampleB = 0.0f;
+  sampleResampleN = 0.0f;
+  sampleResampleReady = false;
   sampleOutputEnabled = false;
 }
 
@@ -767,6 +896,13 @@ bool startSamplePlaybackFromSd() {
   sampleDcX1 = 0.0f;
   sampleDcY1 = 0.0f;
   samplePostLp = 0.0f;
+  sampleFastAaState = 0.0f;
+  sampleResampleP = 0.0f;
+  sampleTempoPhase = 0.0f;
+  sampleResampleA = 0.0f;
+  sampleResampleB = 0.0f;
+  sampleResampleN = 0.0f;
+  sampleResampleReady = false;
   sampleOutputEnabled = false;
   samplePlaybackActive = true;
   samplePlaybackFeeding = true;
@@ -877,7 +1013,6 @@ void sampleStreamTask(void *param) {
 void controlScanTask(void *param) {
   (void)param;
   uint32_t controlLastMs = 0;
-  uint8_t controlMuxScanIndex = 0;
 
   while (true) {
     uint32_t now = millis();
@@ -886,36 +1021,18 @@ void controlScanTask(void *param) {
       continue;
     }
 
-    // Round-robin fuera del hilo de audio para evitar bloquear el render.
-    switch (controlMuxScanIndex) {
-      case 0:
-        potDelayTimeNorm = readSmoothedNormalized(MUX_CH_DELAY_TIME, muxRawSmoothDelayTime);
-        break;
-      case 1:
-        potEnvReleaseNorm = readSmoothedNormalized(MUX_CH_ENV_RELEASE, muxRawSmoothEnvRelease);
-        break;
-      case 2:
-        potVcoBaseNorm = readSmoothedNormalized(MUX_CH_VCO_BASE, muxRawSmoothVcoBase);
-        break;
-      case 3:
-        potFmDepthNorm = readSmoothedNormalized(MUX_CH_FM_DEPTH, muxRawSmoothFmDepth);
-        break;
-      case 4:
-        potLfoRateNorm = readSmoothedNormalized(MUX_CH_LFO_RATE, muxRawSmoothLfoRate);
-        break;
-      case 5:
-        potVcaLevel = readSmoothedNormalized(MUX_CH_VCA_LEVEL, muxRawSmoothVcaLevel);
-        break;
-      case 6:
-        potDelayFeedbackNorm = readSmoothedNormalized(MUX_CH_DELAY_FEEDBACK, muxRawSmoothDelayFeedback);
-        break;
-      case 7:
-      default:
-        potSampleLevelNorm = readSmoothedNormalized(MUX_CH_SAMPLE_LEVEL, muxRawSmoothSampleLevel);
-        break;
-    }
+    // Escaneo completo por ciclo para evitar arrastre entre canales y
+    // asegurar que cada perilla actualice su propio parametro en cada tick.
+    potDelayTimeNorm = readSmoothedNormalized(MUX_CH_DELAY_TIME, muxRawSmoothDelayTime);
+    potEnvReleaseNorm = readSmoothedNormalized(MUX_CH_ENV_RELEASE, muxRawSmoothEnvRelease);
+    potVcoBaseNorm = readSmoothedNormalized(MUX_CH_VCO_BASE, muxRawSmoothVcoBase);
+    potFmDepthNorm = readSmoothedNormalized(MUX_CH_FM_DEPTH, muxRawSmoothFmDepth);
+    potLfoRateNorm = readSmoothedNormalized(MUX_CH_LFO_RATE, muxRawSmoothLfoRate);
+    potVcaLevel = readSmoothedNormalized(MUX_CH_VCA_LEVEL, muxRawSmoothVcaLevel);
+    potDelayFeedbackNorm = readSmoothedNormalized(MUX_CH_DELAY_FEEDBACK, muxRawSmoothDelayFeedback);
+    potSampleLevelNorm = readSmoothedNormalized(MUX_CH_SAMPLE_LEVEL, muxRawSmoothSampleLevel);
+    potSampleTempoNorm = readSmoothedNormalized(MUX_CH_SAMPLE_TEMPO, muxRawSmoothSampleTempo);
 
-    controlMuxScanIndex = (controlMuxScanIndex + 1) % 8;
     controlLastMs = now;
   }
 }
@@ -926,25 +1043,97 @@ float getNextSamplePlaybackValue() {
     sampleDcX1 = 0.0f;
     sampleDcY1 = 0.0f;
     samplePostLp = 0.0f;
+    sampleFastAaState = 0.0f;
+    sampleResampleP = 0.0f;
+    sampleTempoPhase = 0.0f;
+    sampleResampleA = 0.0f;
+    sampleResampleB = 0.0f;
+    sampleResampleN = 0.0f;
+    sampleResampleReady = false;
     return 0.0f;
   }
 
   if (!sampleOutputEnabled) {
     if (sampleRingAvailable() >= SAMPLE_PREROLL_SAMPLES || !samplePlaybackFeeding) {
       sampleOutputEnabled = true;
+      sampleTempoPhase = 0.0f;
+      sampleResampleReady = false;
     } else {
       return 0.0f;
     }
   }
 
-  int16_t monoPcm = 0;
-  bool hasData = sampleRingPop(monoPcm);
+    float tempoRatio = clampf(
+      mapLinear(smoothedSampleTempoNorm, SAMPLE_TEMPO_MIN, SAMPLE_TEMPO_MAX),
+      SAMPLE_TEMPO_MIN,
+      SAMPLE_TEMPO_MAX);
+    float sourceRateRatio = (samplePlaybackRateHz > 0)
+      ? (static_cast<float>(samplePlaybackRateHz) / static_cast<float>(SAMPLE_RATE))
+      : 1.0f;
+    float playbackStep = clampf(tempoRatio * sourceRateRatio, SAMPLE_SRC_STEP_MIN, SAMPLE_SRC_STEP_MAX);
+
+  bool hasData = true;
+  if (!sampleResampleReady) {
+    int16_t pcmA = 0;
+    if (!sampleRingPop(pcmA)) {
+      hasData = false;
+    } else {
+      int16_t pcmB = pcmA;
+      (void)sampleRingPop(pcmB);
+      int16_t pcmN = pcmB;
+      (void)sampleRingPop(pcmN);
+      sampleResampleP = static_cast<float>(pcmA) / 32767.0f;
+      sampleResampleA = static_cast<float>(pcmA) / 32767.0f;
+      sampleResampleB = static_cast<float>(pcmB) / 32767.0f;
+      sampleResampleN = static_cast<float>(pcmN) / 32767.0f;
+      sampleTempoPhase = 0.0f;
+      sampleResampleReady = true;
+    }
+  }
+
+  float resampled = 0.0f;
+  if (hasData && sampleResampleReady) {
+    sampleTempoPhase += playbackStep;
+    while (sampleTempoPhase >= 1.0f) {
+      sampleTempoPhase -= 1.0f;
+      sampleResampleP = sampleResampleA;
+      sampleResampleA = sampleResampleB;
+      sampleResampleB = sampleResampleN;
+      int16_t nextPcm = 0;
+      if (sampleRingPop(nextPcm)) {
+        sampleResampleN = static_cast<float>(nextPcm) / 32767.0f;
+      } else {
+        hasData = false;
+        break;
+      }
+    }
+    if (hasData) {
+      float frac = clampf(sampleTempoPhase, 0.0f, 1.0f);
+      resampled = cubicHermite(sampleResampleP, sampleResampleA, sampleResampleB, sampleResampleN, frac);
+      float fastNorm = (playbackStep > 1.0f)
+          ? clampf((playbackStep - 1.0f) / (SAMPLE_SRC_STEP_MAX - 1.0f), 0.0f, 1.0f)
+          : 0.0f;
+      if (fastNorm > 0.0f) {
+        float aaAlpha = SAMPLE_FAST_AA_ALPHA_BASE +
+                        (SAMPLE_FAST_AA_ALPHA_MIN - SAMPLE_FAST_AA_ALPHA_BASE) * fastNorm;
+        sampleFastAaState += (resampled - sampleFastAaState) * aaAlpha;
+        float aaBlend = fastNorm * SAMPLE_FAST_AA_BLEND_MAX;
+        resampled = resampled * (1.0f - aaBlend) + sampleFastAaState * aaBlend;
+      } else {
+        sampleFastAaState = resampled;
+      }
+    }
+  }
 
   if (hasData) {
     samplePlaybackFadeGain = clampf(samplePlaybackFadeGain + SAMPLE_FADE_STEP, 0.0f, 1.0f);
-    float target = (static_cast<float>(monoPcm) / 32767.0f) * samplePlaybackFadeGain;
+    float target = resampled * samplePlaybackFadeGain;
+    float fastNorm = (playbackStep > 1.0f)
+      ? clampf((playbackStep - 1.0f) / (SAMPLE_SRC_STEP_MAX - 1.0f), 0.0f, 1.0f)
+        : 0.0f;
+    float slewMax = SAMPLE_OUTPUT_SLEW_MAX * (1.0f + fastNorm * (SAMPLE_OUTPUT_SLEW_FAST_MULT - 1.0f));
     float delta = target - samplePlaybackLastValue;
-    delta = clampf(delta, -SAMPLE_OUTPUT_SLEW_MAX, SAMPLE_OUTPUT_SLEW_MAX);
+    delta = clampf(delta, -slewMax, slewMax);
     float slewed = samplePlaybackLastValue + delta;
     samplePlaybackLastValue += (slewed - samplePlaybackLastValue) * SAMPLE_OUTPUT_SMOOTH_ALPHA;
   } else {
@@ -952,6 +1141,7 @@ float getNextSamplePlaybackValue() {
       // Evitar modulación/granulado: si hay underrun temporal, cerrar salida del
       // sample y esperar nuevo preroll antes de reanudar.
       sampleOutputEnabled = false;
+      sampleResampleReady = false;
       samplePlaybackFadeGain = clampf(samplePlaybackFadeGain - 4.0f * SAMPLE_FADE_STEP, 0.0f, 1.0f);
       samplePlaybackLastValue *= SAMPLE_UNDERRUN_DECAY;
     } else {
@@ -965,6 +1155,10 @@ float getNextSamplePlaybackValue() {
         sampleDcX1 = 0.0f;
         sampleDcY1 = 0.0f;
         samplePostLp = 0.0f;
+        sampleFastAaState = 0.0f;
+        sampleResampleP = 0.0f;
+        sampleResampleN = 0.0f;
+        sampleResampleReady = false;
         return 0.0f;
       }
     }
@@ -975,7 +1169,12 @@ float getNextSamplePlaybackValue() {
   float dcBlocked = samplePlaybackLastValue - sampleDcX1 + SAMPLE_DC_BLOCK_R * sampleDcY1;
   sampleDcX1 = samplePlaybackLastValue;
   sampleDcY1 = dcBlocked;
-  samplePostLp += (dcBlocked - samplePostLp) * SAMPLE_POST_LP_ALPHA;
+  float postLpAlpha = SAMPLE_POST_LP_ALPHA;
+  if (playbackStep > 1.0f) {
+    float fastNorm = clampf((playbackStep - 1.0f) / (SAMPLE_SRC_STEP_MAX - 1.0f), 0.0f, 1.0f);
+    postLpAlpha = SAMPLE_POST_LP_ALPHA + (SAMPLE_POST_LP_ALPHA_FAST_MIN - SAMPLE_POST_LP_ALPHA) * fastNorm;
+  }
+  samplePostLp += (dcBlocked - samplePostLp) * postLpAlpha;
   return samplePostLp;
 }
 
@@ -1006,8 +1205,9 @@ void setupI2S() {
 
 void setup() {
   Serial.begin(115200);
-  delay(150);
-
+  if (SYNTH_DELAY_ENABLED) {
+    delay(150);
+  }
   analogReadResolution(12);
   analogSetPinAttenuation(MUX_SIG_PIN, ADC_11db);
   pinMode(MUX_S0_PIN, OUTPUT);
@@ -1027,6 +1227,7 @@ void setup() {
   muxRawSmoothVcaLevel = static_cast<float>(readMuxRaw(MUX_CH_VCA_LEVEL));
   muxRawSmoothDelayFeedback = static_cast<float>(readMuxRaw(MUX_CH_DELAY_FEEDBACK));
   muxRawSmoothSampleLevel = static_cast<float>(readMuxRaw(MUX_CH_SAMPLE_LEVEL));
+  muxRawSmoothSampleTempo = static_cast<float>(readMuxRaw(MUX_CH_SAMPLE_TEMPO));
 
   potDelayTimeNorm = clampf(muxRawSmoothDelayTime / 4095.0f, 0.0f, 1.0f);
   potEnvReleaseNorm = clampf(muxRawSmoothEnvRelease / 4095.0f, 0.0f, 1.0f);
@@ -1036,6 +1237,7 @@ void setup() {
   potVcaLevel = clampf(muxRawSmoothVcaLevel / 4095.0f, 0.0f, 1.0f);
   potDelayFeedbackNorm = clampf(muxRawSmoothDelayFeedback / 4095.0f, 0.0f, 1.0f);
   potSampleLevelNorm = clampf(muxRawSmoothSampleLevel / 4095.0f, 0.0f, 1.0f);
+  potSampleTempoNorm = clampf(muxRawSmoothSampleTempo / 4095.0f, 0.0f, 1.0f);
 
   smoothedDelayTimeNorm = potDelayTimeNorm;
   smoothedEnvReleaseNorm = potEnvReleaseNorm;
@@ -1045,6 +1247,7 @@ void setup() {
   smoothedVcaLevel = potVcaLevel;
   smoothedDelayFeedbackNorm = potDelayFeedbackNorm;
   smoothedSampleLevelNorm = potSampleLevelNorm;
+  smoothedSampleTempoNorm = potSampleTempoNorm;
   fmHzSmoothed = mapLinear(smoothedVcoBaseNorm, VCO_BASE_MIN_HZ, VCO_BASE_MAX_HZ);
 
   setupI2S();
@@ -1067,7 +1270,7 @@ void setup() {
                           &controlTaskHandle,
                           0);
 
-  Serial.println("Synth_tone_test: VCV FM siren (I4=LFO Hz, I3=FM %, I2=VCO Hz, C0/S0=delay time, C6/S6=delay feedback, I5=volume, I7=sample level, red=waveform, white=auto/manual, blue=tap trigger + long-press start-point, green=play SD WAV)");
+  Serial.println("Synth_tone_test: VCV FM siren (I4=LFO Hz, I3=FM %, I2=VCO Hz, C0/S0=delay time, C6/S6=delay feedback, I5=volume, I7=sample level, I8=sample tempo, red=waveform, white=auto/manual, blue=tap trigger + long-press start-point, green=play SD WAV)");
   if (sdInitialized) {
     Serial.println("SD ready");
   } else {
@@ -1077,7 +1280,6 @@ void setup() {
 
 void loop() {
   int16_t audioBuffer[BUFFER_SIZE * 2];
-  static const float outputDriveNorm = tanhf(OUTPUT_DRIVE);
 
   uint32_t now = millis();
 
@@ -1090,7 +1292,7 @@ void loop() {
     redStableState = redReading;
     suppressControlUntilMs = now + BUTTON_CONTROL_SUPPRESS_MS;
     if (redStableState == LOW) {
-      lfoWaveform = static_cast<LfoWaveform>((static_cast<uint8_t>(lfoWaveform) + 1) % static_cast<uint8_t>(LfoWaveform::Count));
+      (void)enqueueButtonEvent(ButtonEventType::CycleWaveform);
     }
   }
 
@@ -1103,7 +1305,7 @@ void loop() {
     whiteStableState = whiteReading;
     suppressControlUntilMs = now + BUTTON_CONTROL_SUPPRESS_MS;
     if (whiteStableState == LOW) {
-      autoMode = !autoMode;
+      (void)enqueueButtonEvent(ButtonEventType::ToggleAutoMode);
     }
   }
 
@@ -1136,7 +1338,7 @@ void loop() {
       blueLongPressLatched = false;
     } else {
       if (blueLongPressLatched) {
-        lfoStartPoint = static_cast<LfoStartPoint>((static_cast<uint8_t>(lfoStartPoint) + 1) % static_cast<uint8_t>(LfoStartPoint::Count));
+        (void)enqueueButtonEvent(ButtonEventType::CycleLfoStartPoint);
       }
       blueLongPressLatched = false;
     }
@@ -1159,9 +1361,9 @@ void loop() {
       greenLongPressLatched = false;
     } else {
       if (greenLongPressLatched) {
-        sampleNextRequest = true;
+        (void)enqueueButtonEvent(ButtonEventType::NextSample);
       } else {
-        sampleStartRequest = true;
+        (void)enqueueButtonEvent(ButtonEventType::TriggerSample);
       }
       greenLongPressLatched = false;
     }
@@ -1169,6 +1371,9 @@ void loop() {
   if (greenStableState == LOW && !greenLongPressLatched && (now - greenPressedStartMs >= GREEN_LONG_PRESS_MS)) {
     greenLongPressLatched = true;
   }
+
+  // Aplicar cambios de botones en un punto seguro antes del render del bloque.
+  processButtonEvents();
 
   // En modo manual, al presionar el trigger reiniciamos fase para que cada disparo
   // arranque desde el punto inicial predecible de cada forma de onda.
@@ -1196,10 +1401,38 @@ void loop() {
   float targetVcoBaseNorm = potVcoBaseNorm;
   float targetFmDepthNorm = potFmDepthNorm;
   float targetLfoRateNorm = potLfoRateNorm;
-  float targetVcaLevel = mapVcaPotToGain(potVcaLevel) * VCA_LEVEL_MAX;
+  bool vcaHardMute = (potVcaLevel <= VCA_HARD_MUTE_POT_NORM);
+  bool sampleHardMute = (potSampleLevelNorm <= SAMPLE_HARD_MUTE_POT_NORM);
+  static bool prevVcaHardMute = true;
+  static bool prevSampleHardMute = true;
+  if (vcaHardMute && !prevVcaHardMute) {
+    clearSynthAudioState(true);
+  }
+  if (sampleHardMute && !prevSampleHardMute) {
+    samplePlaybackLastValue = 0.0f;
+    samplePlaybackFadeGain = 0.0f;
+    sampleDcX1 = 0.0f;
+    sampleDcY1 = 0.0f;
+    samplePostLp = 0.0f;
+    sampleFastAaState = 0.0f;
+    sampleResampleP = 0.0f;
+    sampleResampleN = 0.0f;
+  }
+  prevVcaHardMute = vcaHardMute;
+  prevSampleHardMute = sampleHardMute;
+  float targetVcaLevel = vcaHardMute ? 0.0f : (mapVcaPotToGain(potVcaLevel) * VCA_LEVEL_MAX);
   float targetDelayFeedbackNorm = potDelayFeedbackNorm;
-  float targetSampleLevelNorm = mapVcaPotToGain(potSampleLevelNorm) * SAMPLE_LEVEL_MAX;
+  float targetSampleLevelNorm = sampleHardMute ? 0.0f : (mapSampleLevelLinear(potSampleLevelNorm) * SAMPLE_LEVEL_MAX);
+  float targetSampleTempoNorm = potSampleTempoNorm;
   float targetGateLevel = (autoMode || envelopeStage != EnvelopeStage::Idle) ? 1.0f : 0.0f;
+  bool delayBypassed = !SYNTH_DELAY_ENABLED ||
+      targetDelayFeedbackNorm <= DELAY_OFF_FEEDBACK_NORM ||
+      targetDelayTimeNorm <= DELAY_OFF_TIME_NORM;
+  static bool delayBypassedPrev = true;
+  if (delayBypassed && !delayBypassedPrev) {
+    clearDelayState();
+  }
+  delayBypassedPrev = delayBypassed;
 
   for (int i = 0; i < BUFFER_SIZE; ++i) {
     smoothedDelayTimeNorm = smoothParamAdaptive(smoothedDelayTimeNorm, targetDelayTimeNorm);
@@ -1210,6 +1443,7 @@ void loop() {
     smoothedVcaLevel = smoothParamAdaptive(smoothedVcaLevel, targetVcaLevel);
     smoothedDelayFeedbackNorm = smoothParamAdaptive(smoothedDelayFeedbackNorm, targetDelayFeedbackNorm);
     smoothedSampleLevelNorm = smoothParamAdaptive(smoothedSampleLevelNorm, targetSampleLevelNorm);
+    smoothedSampleTempoNorm = smoothParamAdaptive(smoothedSampleTempoNorm, targetSampleTempoNorm);
     gateLevel += (targetGateLevel - gateLevel) * GATE_SMOOTH_ALPHA;
 
     // Envelope para modo manual: al presionar trigger abre a ganancia plena y
@@ -1285,47 +1519,61 @@ void loop() {
     vcoToneState += (rawSquare - vcoToneState) * VCO_TONE_ALPHA;
     float drySample = vcoToneState * OUTPUT_GAIN * gateLevel * envelopeLevel;
 
-    // Delay dub con tiempo variable por C0/S0 (0..7000 ms) y feedback por C6/S6.
-    float currentDelayMs = DELAY_TIME_MIN_MS + smoothedDelayTimeNorm * (DELAY_TIME_MS - DELAY_TIME_MIN_MS);
-    float currentDelayFeedback = mapLinear(smoothedDelayFeedbackNorm, DELAY_FEEDBACK_MIN, DELAY_FEEDBACK_MAX);
-    int currentDelaySamples = static_cast<int>(clampf(currentDelayMs * DELAY_SAMPLE_RATE / 1000.0f, 0.0f, static_cast<float>(DELAY_BUFFER_SAMPLES - 1)));
+    // Delay de sirena opcional para pruebas A/B.
     float delayedSample = 0.0f;
-    if (currentDelaySamples > 0) {
-      int readIndex = delayIndex - currentDelaySamples;
-      if (readIndex < 0) {
-        readIndex += DELAY_BUFFER_SAMPLES;
+    float synthSample = drySample;
+    if (!delayBypassed) {
+      float currentDelayMs = DELAY_TIME_MIN_MS + smoothedDelayTimeNorm * (DELAY_TIME_MS - DELAY_TIME_MIN_MS);
+      float currentDelayFeedback = mapLinear(smoothedDelayFeedbackNorm, DELAY_FEEDBACK_MIN, DELAY_FEEDBACK_MAX);
+      int currentDelaySamples = static_cast<int>(clampf(currentDelayMs * DELAY_SAMPLE_RATE / 1000.0f, 0.0f, static_cast<float>(DELAY_BUFFER_SAMPLES - 1)));
+      if (currentDelaySamples > 0) {
+        int readIndex = delayIndex - currentDelaySamples;
+        if (readIndex < 0) {
+          readIndex += DELAY_BUFFER_SAMPLES;
+        }
+        delayedSample = static_cast<float>(delayBuffer[readIndex]) / 32767.0f;
       }
-      delayedSample = static_cast<float>(delayBuffer[readIndex]) / 32767.0f;
-    }
-    float wetSample = delayedSample * DELAY_WET_TRIM;
-    float synthSample = drySample * (1.0f - DELAY_MIX) + wetSample * DELAY_MIX;
-    float sdSample = getNextSamplePlaybackValue() * SAMPLE_MIX_GAIN * smoothedSampleLevelNorm;
-    float feedbackInput = drySample + delayedSample * currentDelayFeedback;
-    delayFeedbackFiltered += (feedbackInput - delayFeedbackFiltered) * DELAY_FEEDBACK_DARKEN_ALPHA;
+      float wetSample = delayedSample * DELAY_WET_TRIM;
+      synthSample = drySample + wetSample * DELAY_MIX;
 
-    // Escritura del delay a tasa reducida para habilitar 5 s de retardo dentro de la RAM disponible.
-    delayWritePhase += DELAY_SAMPLE_RATE;
-    if (delayWritePhase >= SAMPLE_RATE) {
-      delayWritePhase -= SAMPLE_RATE;
-      delayBuffer[delayIndex] = static_cast<int16_t>(clampf(delayFeedbackFiltered, -1.0f, 1.0f) * 32767.0f);
-      delayIndex = (delayIndex + 1) % DELAY_BUFFER_SAMPLES;
-    }
+      float feedbackInput = drySample * DELAY_INPUT_SEND + delayedSample * currentDelayFeedback;
+      delayFeedbackFiltered += (feedbackInput - delayFeedbackFiltered) * DELAY_FEEDBACK_DARKEN_ALPHA;
 
-    // Ruta de sirena: saturacion + limpieza final.
-    synthSample = tanhf(synthSample * OUTPUT_DRIVE) / outputDriveNorm;
+      // Escritura del delay a tasa reducida para habilitar 5 s de retardo dentro de la RAM disponible.
+      if (!vcaHardMute) {
+        delayWritePhase += DELAY_SAMPLE_RATE;
+        if (delayWritePhase >= SAMPLE_RATE) {
+          delayWritePhase -= SAMPLE_RATE;
+          delayBuffer[delayIndex] = static_cast<int16_t>(clampf(delayFeedbackFiltered, -1.0f, 1.0f) * 32767.0f);
+          delayIndex = (delayIndex + 1) % DELAY_BUFFER_SAMPLES;
+        }
+      }
+    }
+    float sampleLevel = sampleHardMute ? 0.0f : smoothedSampleLevelNorm;
+    if (sampleLevel <= 0.0002f) {
+      sampleLevel = 0.0f;
+    }
+    float sdSample = getNextSamplePlaybackValue() * SAMPLE_MIX_GAIN * sampleLevel;
+
+    // Ruta de sirena limpia: mantener linealidad y headroom.
     float dcBlocked = synthSample - dcBlockX1 + DC_BLOCK_R * dcBlockY1;
     dcBlockX1 = synthSample;
     dcBlockY1 = dcBlocked;
     outputLpState += (dcBlocked - outputLpState) * OUTPUT_LP_ALPHA;
 
     float synthOut = outputLpState * smoothedVcaLevel;
+    synthOut *= SYNTH_PATH_TRIM;
+    if (vcaHardMute || smoothedVcaLevel <= 0.0002f) {
+      synthOut = 0.0f;
+    }
     if (samplePlaybackActive) {
       synthOut *= 0.82f;
     }
+    sdSample *= SAMPLE_PATH_TRIM;
     float mixed = synthOut + sdSample;
-    mixed = clampf(mixed, -1.1f, 1.1f);
-    if (!samplePlaybackActive) {
-      mixed = mixed - (mixed * mixed * mixed) * 0.12f;
+    float mixedAbs = fabsf(mixed);
+    if (mixedAbs > MIX_PEAK_GUARD) {
+      mixed *= (MIX_PEAK_GUARD / mixedAbs);
     }
     mixed = clampf(mixed, -1.0f, 1.0f);
 

@@ -74,7 +74,8 @@ Canales usados:
 - I4/C4: frecuencia LFO
 - I5/C5: volumen final
 - I6/C6: feedback delay
-- I7/C7: volumen de sample (ganancia de reproduccion WAV)
+- I7/C7: volumen de sample (ganancia lineal con cero real)
+- I8/C8: tempo de sample (centro = velocidad original)
 
 ### Botones (INPUT_PULLUP)
 - Rojo: GPIO4
@@ -103,8 +104,26 @@ Canales usados:
   - Pulsacion larga (2 s) y soltar: cambia al siguiente sample WAV en SD.
 
 Control de balance synth/sample:
-- La perilla en I7/C7 permite ajustar el volumen relativo de los samples para
-  empatar el nivel con la sirena sin tocar el volumen maestro general.
+- La perilla en I7/C7 ajusta volumen de sample con respuesta lineal.
+- Minimo de I7/C7 = 0 real (silencio de sample).
+- La perilla en I8/C8 ajusta tempo del sample:
+  - Centro: tempo original.
+  - Izquierda: mas lento.
+  - Derecha: mas rapido.
+
+Tabla simple de impacto por perilla:
+
+| Perilla | Parametro | Impacto sonoro | Ejemplo rapido |
+| --- | --- | --- | --- |
+| I0/C0 | Tiempo de delay | Separa mas o menos el eco de la fuente | Baja: slap corto, alta: eco largo |
+| I1/C1 | Release envelope | Extiende o acorta cola en modo MANUAL | Baja: corte seco, alta: cola larga |
+| I2/C2 | Frecuencia base VCO | Sube/baja tono base de sirena | Baja: grave, alta: agudo |
+| I3/C3 | Profundidad FM | Intensidad de modulacion de tono | Baja: casi limpio, alta: barrido agresivo |
+| I4/C4 | Frecuencia LFO | Velocidad de oscilacion principal | Baja: lenta, alta: rapida |
+| I5/C5 | Volumen final | Nivel general de salida | Baja: suave, alta: fuerte |
+| I6/C6 | Feedback delay | Cantidad de repeticiones del eco | Baja: pocas repeticiones, alta: cola densa |
+| I7/C7 | Volumen sample | Mezcla lineal del WAV, con cero real al minimo | Minimo: mute sample, maximo: sample dominante |
+| I8/C8 | Tempo sample | Cambia velocidad de reproduccion del WAV | Izq: lento, centro: original, der: rapido |
 
 ## 6) Arquitectura de audio
 
